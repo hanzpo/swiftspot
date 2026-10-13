@@ -46,7 +46,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         ui.add_space(10.0);
                     }
                     ui.add_space(8.0);
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    buttons(ui, |ui| {
                         if theme::pill_button(ui, &palette, &gettext(locale, "Set up personal app"), true).clicked() {
                             app.actions.push(Action::OpenPersonalAppSetup);
                         }
@@ -84,7 +84,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         .wrap(),
                     );
                     ui.add_space(20.0);
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    buttons(ui, |ui| {
                         if theme::pill_button(
                             ui,
                             &palette,
@@ -133,7 +133,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         .wrap(),
                     );
                     ui.add_space(20.0);
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    buttons(ui, |ui| {
                         if theme::pill_button(ui, &palette, &gettext(locale, "Add anyway"), true).clicked() {
                             app.actions.push(Action::ConfirmAddToPlaylist {
                                 playlist_id: playlist_id.clone(),
@@ -190,7 +190,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         },
                     );
                     ui.add_space(16.0);
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    buttons(ui, |ui| {
                         if theme::pill_button(ui, &palette, &gettext(locale, "Done"), true).clicked() {
                             app.actions.push(Action::CloseDialog);
                         }
@@ -216,7 +216,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         .wrap(),
                     );
                     ui.add_space(20.0);
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    buttons(ui, |ui| {
                         if theme::pill_button(ui, &palette, &gettext(locale, "OK"), true).clicked() {
                             app.actions.push(Action::CloseDialog);
                         }
@@ -228,6 +228,15 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     if response.should_close() {
         app.actions.push(Action::CloseDialog);
     }
+}
+
+// Keep button rows content-sized when the shared modal area last held a taller dialog.
+fn buttons(ui: &mut egui::Ui, add_buttons: impl FnOnce(&mut egui::Ui)) {
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
+        Layout::right_to_left(Align::Center),
+        add_buttons,
+    );
 }
 
 fn duplicate_message(
@@ -380,7 +389,7 @@ fn create_playlist(app: &mut App, ui: &mut egui::Ui) {
     let name_value = name.trim().to_string();
     let public_value = *public;
     let uris = add_uris.clone();
-    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+    buttons(ui, |ui| {
         if busy {
             theme::spinner(ui, 18.0, palette.accent);
         } else {
@@ -559,7 +568,7 @@ fn edit_playlist(app: &mut App, ui: &mut egui::Ui) {
     let name_value = name.trim().to_string();
     let description_value = description.trim().to_string();
     let public_value = *public;
-    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+    buttons(ui, |ui| {
         if busy {
             theme::spinner(ui, 18.0, palette.accent);
         } else {

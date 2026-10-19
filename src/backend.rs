@@ -3876,6 +3876,55 @@ async fn handle(
             Err(_) => log::warn!("removing playlist rows over the session timed out"),
         }
     }
+    // A playlist's name and description change over the session, as
+    // Spotify's own apps change them. Whether it is public is the Web
+    // API's to change, and is all that is left for it.
+    let mut request = request;
+    if let ApiRequest::UpdatePlaylist {
+        id,
+        name,
+        description,
+        public,
+    } = &request
+        && (name.is_some() || description.is_some())
+        && let Some(engine) = engine.filter(|engine| {
+            session_reads_for(&engine.session().username(), api.account().as_ref())
+        })
+    {
+        match tokio::time::timeout(
+            SESSION_READ_TIMEOUT,
+            session_reads::update_details(
+                engine.session(),
+                id,
+                name.as_deref(),
+                description.as_deref(),
+            ),
+        )
+        .await
+        {
+            Ok(Ok(_)) if public.is_none() => {
+                return (
+                    ApiResponse::PlaylistUpdated {
+                        id: id.clone(),
+                        result: Ok(()),
+                    },
+                    None,
+                );
+            }
+            Ok(Ok(_)) => {
+                request = ApiRequest::UpdatePlaylist {
+                    id: id.clone(),
+                    name: None,
+                    description: None,
+                    public: *public,
+                };
+            }
+            Ok(Err(error)) => {
+                log::warn!("changing playlist details over the session failed: {error:#}")
+            }
+            Err(_) => log::warn!("changing playlist details over the session timed out"),
+        }
+    }
     // An artist's top songs come over the session where it can: the Web
     // API serves them only from the shared app, whose rate limit can hold
     // them back for minutes.

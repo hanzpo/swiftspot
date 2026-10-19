@@ -393,7 +393,10 @@ sign-in and playback approval, the session connects at start-up while the
 shared app is still verifying the sign-in, which its rate limit can hold
 back for minutes, and the app signs in with the session's account, its
 profile name and picture, and its plan. The account list, playlist pages
-and an artist's top songs are read over the session from then on. When the shared app's answer arrives and
+and an artist's top songs are read over the session from then on. Renaming
+a playlist or changing its description goes to Spotify's playlist service
+over the session too, as removing its rows does; making it public or
+private stays with the Web API. When the shared app's answer arrives and
 names a different account, playback on this computer stops and asks to be
 enabled again. The socket's `pathfinder.query` method sends
 any of the known queries and returns Spotify's answer as it is.

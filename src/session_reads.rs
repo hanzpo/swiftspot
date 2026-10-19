@@ -393,16 +393,7 @@ pub async fn remove_rows(
     id: &str,
     rows: &[(u32, String)],
 ) -> anyhow::Result<Option<String>> {
-    use librespot_protocol::playlist4_external::{
-        ChangeInfo, Delta, Item, ListChanges, Op, Rem, SelectedListContent, op::Kind,
-    };
-    let list = window(session, id, 0, 0)
-        .await
-        .map_err(|failure| match failure {
-            Failure::Definitive(error) => anyhow::anyhow!("{error}"),
-            Failure::Retry(error) => error,
-        })?;
-    let revision = list.revision.clone();
+    use librespot_protocol::playlist4_external::{Item, Op, Rem, op::Kind};
     let mut rows = rows.to_vec();
     // From the end, so each position still names its row.
     rows.sort_by_key(|row| std::cmp::Reverse(row.0));
@@ -422,6 +413,58 @@ pub async fn remove_rows(
             op
         })
         .collect();
+    change(session, id, ops).await
+}
+
+/// Renames a playlist or gives it a new description, as Spotify's own apps
+/// do, over the session; the Web API does it only from the shared app.
+pub async fn update_details(
+    session: &Session,
+    id: &str,
+    name: Option<&str>,
+    description: Option<&str>,
+) -> anyhow::Result<Option<String>> {
+    use librespot_protocol::playlist4_external::{
+        ListAttributes, ListAttributesPartialState, Op, UpdateListAttributes, op::Kind,
+    };
+    let mut values = ListAttributes::new();
+    if let Some(name) = name {
+        values.set_name(name.to_string());
+    }
+    if let Some(description) = description {
+        values.set_description(description.to_string());
+    }
+    let mut state = ListAttributesPartialState::new();
+    state.values = protobuf::MessageField::some(values);
+    let mut update = UpdateListAttributes::new();
+    update.new_attributes = protobuf::MessageField::some(state);
+    let mut op = Op::new();
+    op.set_kind(Kind::UPDATE_LIST_ATTRIBUTES);
+    op.update_list_attributes = protobuf::MessageField::some(update);
+    change(session, id, vec![op]).await
+}
+
+/// The longest wait between tries of a change the playlist service turned
+/// away for a moment.
+const CHANGE_PATIENCE: std::time::Duration = std::time::Duration::from_secs(4);
+
+/// Sends `ops` to the playlist as one change on its current revision, and
+/// gives back the snapshot it has after them.
+async fn change(
+    session: &Session,
+    id: &str,
+    ops: Vec<librespot_protocol::playlist4_external::Op>,
+) -> anyhow::Result<Option<String>> {
+    use librespot_protocol::playlist4_external::{
+        ChangeInfo, Delta, ListChanges, SelectedListContent,
+    };
+    let list = window(session, id, 0, 0)
+        .await
+        .map_err(|failure| match failure {
+            Failure::Definitive(error) => anyhow::anyhow!("{error}"),
+            Failure::Retry(error) => error,
+        })?;
+    let revision = list.revision.clone();
     let mut delta = Delta::new();
     delta.set_base_version(revision.clone());
     delta.ops = ops;
@@ -435,15 +478,31 @@ pub async fn remove_rows(
         http::header::CONTENT_TYPE,
         http::HeaderValue::from_static("application/x-protobuf"),
     );
-    let answer = session
-        .spclient()
-        .request(
-            &http::Method::POST,
-            &format!("/playlist/v2/playlist/{id}/changes"),
-            Some(headers),
-            Some(&changes.write_to_bytes()?),
-        )
-        .await?;
+    let body = changes.write_to_bytes()?;
+    // The playlist service turns writes away for a moment now and then;
+    // a moment later it takes them.
+    let mut wait = std::time::Duration::from_millis(500);
+    let answer = loop {
+        match session
+            .spclient()
+            .request(
+                &http::Method::POST,
+                &format!("/playlist/v2/playlist/{id}/changes"),
+                Some(headers.clone()),
+                Some(&body),
+            )
+            .await
+        {
+            Err(error)
+                if error.kind == librespot_core::error::ErrorKind::ResourceExhausted
+                    && wait <= CHANGE_PATIENCE =>
+            {
+                tokio::time::sleep(wait).await;
+                wait *= 2;
+            }
+            answer => break answer?,
+        }
+    };
     let content = SelectedListContent::parse_from_bytes(&answer)?;
     Ok(content
         .resulting_revisions

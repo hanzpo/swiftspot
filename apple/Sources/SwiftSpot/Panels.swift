@@ -400,7 +400,32 @@ struct DevicesView: View {
                     .help("Refresh")
             }
             .padding(.bottom, 6)
-            if model.devices.isEmpty {
+            if model.localPlayback != "ready" {
+                Button {
+                    model.enablePlayback()
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "laptopcomputer")
+                            .frame(width: 22)
+                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("This Mac").lineLimit(1)
+                            Text(localPlaybackNote)
+                                .font(.caption)
+                                .foregroundStyle(model.localPlayback == "failed" ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                                .lineLimit(2)
+                        }
+                        Spacer()
+                        if busy { ProgressView().controlSize(.small) }
+                    }
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(busy)
+            }
+            if model.devices.isEmpty && model.localPlayback == "ready" {
                 Text("Looking for devices…")
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 8)
@@ -433,6 +458,19 @@ struct DevicesView: View {
         .padding(14)
         .frame(width: 290)
         .task { await model.loadDevices() }
+    }
+
+    private var busy: Bool {
+        model.localPlayback == "authorizing" || model.localPlayback == "connecting"
+    }
+
+    private var localPlaybackNote: String {
+        switch model.localPlayback {
+        case "authorizing": "Approve playback in your browser"
+        case "connecting": "Connecting…"
+        case "failed": model.localPlaybackError ?? "Couldn't set up playback. Click to try again."
+        default: "Set up playback on this Mac"
+        }
     }
 }
 

@@ -20074,6 +20074,21 @@ mod tests {
     }
 
     #[test]
+    fn the_device_list_says_whether_this_mac_can_play() {
+        let mut app = headless_app();
+        app.local_playback = LocalPlayback::Unavailable;
+        assert_eq!(app.api_devices()["local_playback"], "off");
+        app.local_playback = LocalPlayback::Failed("no grant".into());
+        let devices = app.api_devices();
+        assert_eq!(devices["local_playback"], "failed");
+        assert_eq!(devices["local_error"], "no grant");
+        app.local_playback = LocalPlayback::Ready {
+            device_id: "mac".into(),
+        };
+        assert_eq!(app.api_devices()["local_playback"], "ready");
+    }
+
+    #[test]
     fn karaoke_fetches_its_model_once_and_keeps_its_level() {
         let mut app = headless_app();
         let ctx = egui::Context::default();

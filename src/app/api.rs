@@ -1396,7 +1396,7 @@ impl App {
         })
     }
 
-    fn api_devices(&self) -> Value {
+    pub(super) fn api_devices(&self) -> Value {
         let mut devices: Vec<Value> = self
             .devices
             .iter()
@@ -1431,7 +1431,19 @@ impl App {
                 }),
             );
         }
-        json!({ "loading": self.devices_loading, "devices": devices })
+        let (local_playback, local_error) = match &self.local_playback {
+            crate::backend::LocalPlayback::Unavailable => ("off", None),
+            crate::backend::LocalPlayback::Authorizing => ("authorizing", None),
+            crate::backend::LocalPlayback::Connecting => ("connecting", None),
+            crate::backend::LocalPlayback::Ready { .. } => ("ready", None),
+            crate::backend::LocalPlayback::Failed(error) => ("failed", Some(error.clone())),
+        };
+        json!({
+            "loading": self.devices_loading,
+            "devices": devices,
+            "local_playback": local_playback,
+            "local_error": local_error,
+        })
     }
 
     fn api_playlists(&self) -> Value {

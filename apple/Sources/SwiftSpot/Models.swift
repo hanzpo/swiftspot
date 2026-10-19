@@ -290,6 +290,11 @@ struct Device: Codable, Hashable, Identifiable, Sendable {
 struct DevicesState: Codable, Sendable {
     var loading: Bool
     var devices: [Device]
+    /// Whether this Mac can play: "ready", "off" until playback is set up,
+    /// "authorizing" while the browser is open for it, "connecting", or
+    /// "failed" with `localError`.
+    var localPlayback: String
+    var localError: String?
 }
 
 struct LyricsLine: Codable, Hashable, Sendable {

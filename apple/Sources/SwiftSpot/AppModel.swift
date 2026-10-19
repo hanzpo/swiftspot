@@ -96,6 +96,9 @@ final class AppModel {
     var queue: QueueState?
     var lyrics: LyricsState?
     var devices: [Device] = []
+    /// Whether this Mac can play; see `DevicesState.localPlayback`.
+    var localPlayback = "ready"
+    var localPlaybackError: String?
     var showDevices = false
     /// The full-window player, as Music's Full Screen Player.
     var showNowPlaying = false
@@ -539,8 +542,24 @@ final class AppModel {
         for attempt in 0..<10 {
             guard let state = try? await call("devices.list", as: DevicesState.self) else { return }
             devices = state.devices
+            localPlayback = state.localPlayback
+            localPlaybackError = state.localError
             if !state.loading && attempt > 1 { return }
             try? await Task.sleep(for: .milliseconds(400))
+        }
+    }
+
+    /// Opens the browser to let this Mac play, as Spotify asks once.
+    func enablePlayback() {
+        localPlayback = "authorizing"
+        send("auth.enable_playback")
+        Task {
+            // The browser round trip takes a while; keep the list current.
+            for _ in 0..<90 {
+                try? await Task.sleep(for: .seconds(2))
+                await loadDevices()
+                if localPlayback == "ready" || localPlayback == "failed" { return }
+            }
         }
     }
 

@@ -386,7 +386,16 @@ pages scrolled into view.
 
 Pathfinder answers for the session's account. It is asked before the shared
 app has confirmed the Web API's account, and never when the Web API is
-signed in as another account. The socket's `pathfinder.query` method sends
+signed in as another account.
+
+The streaming session does not wait for the shared app either. With a saved
+sign-in and playback approval, the session connects at start-up while the
+shared app is still verifying the sign-in, which its rate limit can hold
+back for minutes, and the app signs in with the session's account, its
+profile name and picture, and its plan. The account list, playlist pages
+and an artist's top songs are read over the session from then on. When the shared app's answer arrives and
+names a different account, playback on this computer stops and asks to be
+enabled again. The socket's `pathfinder.query` method sends
 any of the known queries and returns Spotify's answer as it is.
 
 ## Proxy

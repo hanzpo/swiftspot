@@ -1855,7 +1855,7 @@ impl Worker {
                     error,
                     lease,
                 } => {
-                    if lease.current() && self.signed_in {
+                    if lease.current() {
                         self.on_engine_connected(session_generation, *engine, error)
                     } else if let Some(engine) = *engine {
                         engine.shutdown();
@@ -2335,6 +2335,17 @@ impl Worker {
                 }
             });
         }
+        // The session may have signed in first; it must be this account's.
+        if let Some(engine) = &self.engine
+            && engine.session().username() != user.id
+        {
+            if let Some(engine) = self.engine.take() {
+                engine.shutdown();
+            }
+            self.emit(Event::Playback(LocalPlayback::Failed(
+                "Playback was authorized for another Spotify account. Enable playback again with the signed-in account.".into(),
+            )));
+        }
         match source {
             ApiSource::Shared => {
                 if !self.signed_in {
@@ -2600,7 +2611,10 @@ impl Worker {
     /// Bring the engine up from a credential stored by a previous playback
     /// authorization, if there is one. Silent when there is nothing to resume.
     fn resume_engine(&mut self) {
-        if !self.signed_in
+        // A saved sign-in still being verified is enough: the shared app's
+        // rate limit can hold its answer back for minutes, and the session
+        // needs nothing from it.
+        if !may_start_session(self.signed_in, &self.api.state(ApiSource::Shared))
             || self.engine.is_some()
             || self.engine_busy
             || self.premium == Some(false)
@@ -2608,9 +2622,10 @@ impl Worker {
             return;
         }
         if let Some(credentials) = self.playback_grant.clone() {
-            if credentials.username.as_deref()
-                != self.api.account().as_ref().map(|account| account.as_str())
-            {
+            if !session_reads_for(
+                credentials.username.as_deref().unwrap_or_default(),
+                self.api.account().as_ref(),
+            ) {
                 self.emit(Event::Playback(LocalPlayback::Failed(
                     "Stored playback belongs to another Spotify account. Enable playback again."
                         .into(),
@@ -2619,6 +2634,34 @@ impl Worker {
             }
             self.connect_engine(credentials);
         }
+    }
+
+    /// Signs in on the session's word while the shared app has yet to
+    /// verify the saved sign-in: the account is the session's, its name
+    /// and picture come from its profile and its plan from the session.
+    /// The shared app's answer, when it comes, checks the account is the
+    /// same.
+    fn connected_over_session(&mut self, engine: &Engine) {
+        let session = engine.session().clone();
+        let username = session.username();
+        self.signed_in = true;
+        self.emit(Event::Auth(AuthStatus::Connected {
+            username: username.clone(),
+        }));
+        let events = self.events.clone();
+        let waker = self.waker.clone();
+        tokio::spawn(async move {
+            let profile = session_reads::user_profile(&session, &username).await.ok();
+            let user = User {
+                id: username.clone(),
+                display_name: profile.as_ref().map(|profile| profile.name.clone()),
+                images: profile.map(|profile| profile.images).unwrap_or_default(),
+                product: session.get_user_attribute("type"),
+                ..User::default()
+            };
+            let _ = events.send(Event::Api(Box::new(ApiResponse::Me(Ok(user)))));
+            waker.wake();
+        });
     }
 
     /// Replace the engine after a user-initiated change (audio settings or
@@ -2845,7 +2888,9 @@ impl Worker {
         engine: Option<Engine>,
         error: Option<String>,
     ) {
-        if !self.signed_in || session_generation != self.album_type_lookup.session_generation {
+        if !may_start_session(self.signed_in, &self.api.state(ApiSource::Shared))
+            || session_generation != self.album_type_lookup.session_generation
+        {
             if let Some(engine) = engine {
                 engine.shutdown();
             }
@@ -2864,7 +2909,10 @@ impl Worker {
         match engine {
             Some(engine) => {
                 if let Some(grant) = engine.credentials() {
-                    if !playback_account_matches(&grant, self.api.account()) {
+                    if !session_reads_for(
+                        grant.username.as_deref().unwrap_or_default(),
+                        self.api.account().as_ref(),
+                    ) {
                         engine.shutdown();
                         self.emit(Event::Playback(LocalPlayback::Failed("Playback was authorized for another Spotify account. Enable playback again with the signed-in account.".into())));
                         return;
@@ -2888,6 +2936,9 @@ impl Worker {
                     // the load and retry if needed.
                     self.resume_verify = Some((spec, 0));
                     self.schedule_resume_check(1_500);
+                }
+                if !self.signed_in {
+                    self.connected_over_session(&engine);
                 }
                 self.engine = Some(engine);
                 self.start_rootlist();
@@ -4466,6 +4517,12 @@ mod playlist_search_cache {
 /// view of a playlist is not this one's.
 fn same_account(username: &str, account: Option<&AccountId>) -> bool {
     account.is_some_and(|account| account.as_str() == username)
+}
+
+/// Whether the playback session may start: once signed in, or while the
+/// shared app is verifying a saved sign-in.
+fn may_start_session(signed_in: bool, shared: &SessionState) -> bool {
+    signed_in || matches!(shared, SessionState::Authorizing)
 }
 
 /// Whether the session may read for the Web API's account. It reads only
@@ -6343,10 +6400,7 @@ mod authorization_tests {
         worker.resume_engine();
         assert!(!worker.engine_busy);
         assert!(worker.engine.is_none());
-        assert!(!playback_account_matches(
-            worker.playback_grant.as_ref().unwrap(),
-            worker.api.account()
-        ));
+        assert!(!session_reads_for("bob", worker.api.account().as_ref()));
         assert!(
             events
                 .try_iter()
@@ -6641,14 +6695,6 @@ fn web_slot(source: ApiSource) -> CredentialSlot {
     }
 }
 
-fn playback_account_matches(credentials: &Credentials, account: Option<AccountId>) -> bool {
-    credentials
-        .username
-        .as_deref()
-        .filter(|name| !name.is_empty())
-        .is_some_and(|name| same_account(name, account.as_ref()))
-}
-
 #[cfg(test)]
 mod session_tests {
     use super::*;
@@ -6661,6 +6707,15 @@ mod session_tests {
         assert!(same_account("alice", Some(&alice)));
         assert!(!same_account("bob", Some(&alice)));
         assert!(!same_account("alice", None), "nothing verified yet");
+    }
+
+    /// A saved sign-in the shared app is still verifying starts the
+    /// session; nothing to verify, or a sign-out, does not.
+    #[test]
+    fn the_session_starts_while_a_saved_sign_in_is_verified() {
+        assert!(may_start_session(false, &SessionState::Authorizing));
+        assert!(may_start_session(true, &SessionState::Unavailable));
+        assert!(!may_start_session(false, &SessionState::Unavailable));
     }
 
     /// Reads go over the session before the Web API's account is known,

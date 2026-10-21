@@ -9958,14 +9958,15 @@ impl App {
             return;
         }
         if !self.liked_songs.cache_checked {
-            if self.user_id().is_none() {
+            let Some(account_id) = self.user_id().map(str::to_owned) else {
                 return;
-            }
+            };
             self.load_generation = self.load_generation.wrapping_add(1);
             self.liked_songs.generation = self.load_generation;
             self.liked_songs.cache_loading = true;
             self.library.liked.loading = true;
             self.backend.send(Command::LoadLikedSongsCache {
+                account_id,
                 generation: self.load_generation,
             });
         } else if !self.liked_songs.fresh(jiff::Timestamp::now().as_second())

@@ -731,7 +731,10 @@ pub enum Command {
     },
     /// Resolve user ids to display names through the streaming session.
     UserNames(Vec<String>),
+    /// Read the account's last Liked Songs from disk. Always answered, with
+    /// no cache when the files aren't this account's to read.
     LoadLikedSongsCache {
+        account_id: String,
         generation: u64,
     },
     StoreLikedSongsCache(crate::liked::Cache),
@@ -1962,29 +1965,30 @@ impl Worker {
                     }
                 }
                 Command::UserNames(ids) => self.fetch_user_names(ids),
-                Command::LoadLikedSongsCache { generation } => {
-                    if let Some(account) = self.api.account() {
-                        let account_id = account.as_str().to_string();
-                        let path = self.dirs.liked_songs_cache_file(&account_id);
-                        let events = self.events.clone();
-                        let waker = self.waker.clone();
-                        tokio::spawn(async move {
-                            let cache = crate::liked::read(&path, &account_id).await;
-                            let _ = events.send(Event::LikedSongsCache {
-                                account_id,
-                                generation,
-                                cache,
-                            });
-                            waker.wake();
+                Command::LoadLikedSongsCache {
+                    account_id,
+                    generation,
+                } => {
+                    let path = self
+                        .owns_cache(&account_id)
+                        .then(|| self.dirs.liked_songs_cache_file(&account_id));
+                    let events = self.events.clone();
+                    let waker = self.waker.clone();
+                    tokio::spawn(async move {
+                        let cache = match path {
+                            Some(path) => crate::liked::read(&path, &account_id).await,
+                            None => None,
+                        };
+                        let _ = events.send(Event::LikedSongsCache {
+                            account_id,
+                            generation,
+                            cache,
                         });
-                    }
+                        waker.wake();
+                    });
                 }
                 Command::StoreLikedSongsCache(cache) => {
-                    if self
-                        .api
-                        .account()
-                        .is_some_and(|account| account.as_str() == cache.account_id)
-                    {
+                    if self.owns_cache(&cache.account_id) {
                         let path = self.dirs.liked_songs_cache_file(&cache.account_id);
                         if let Err(error) = crate::liked::write(&path, &cache).await {
                             log::warn!("unable to store Liked Songs cache: {error}");
@@ -1992,11 +1996,7 @@ impl Worker {
                     }
                 }
                 Command::LoadHomeCache { account_id } => {
-                    if self
-                        .api
-                        .account()
-                        .is_some_and(|account| account.as_str() == account_id)
-                    {
+                    if self.owns_cache(&account_id) {
                         let path = self.dirs.home_cache_file(&account_id);
                         let events = self.events.clone();
                         let waker = self.waker.clone();
@@ -2008,11 +2008,7 @@ impl Worker {
                     }
                 }
                 Command::StoreHomeCache(cache) => {
-                    if self
-                        .api
-                        .account()
-                        .is_some_and(|account| account.as_str() == cache.account_id)
-                    {
+                    if self.owns_cache(&cache.account_id) {
                         let path = self.dirs.home_cache_file(&cache.account_id);
                         if let Err(error) = crate::home_cache::write(&path, &cache).await {
                             log::warn!("unable to store the Home cache: {error}");
@@ -2641,6 +2637,14 @@ impl Worker {
     /// and picture come from its profile and its plan from the session.
     /// The shared app's answer, when it comes, checks the account is the
     /// same.
+    /// Whether the app may read and write `account_id`'s cached Home and
+    /// Liked Songs. The app knows its account from the session before the
+    /// shared app confirms it, which a rate limit can hold back for minutes,
+    /// so only an account the shared app names otherwise is refused.
+    fn owns_cache(&self, account_id: &str) -> bool {
+        session_reads_for(account_id, self.api.account().as_ref())
+    }
+
     fn connected_over_session(&mut self, engine: &Engine) {
         let session = engine.session().clone();
         let username = session.username();
@@ -6454,6 +6458,68 @@ mod authorization_tests {
             events
                 .try_iter()
                 .any(|event| matches!(event, Event::Playback(LocalPlayback::Failed(_))))
+        );
+    }
+
+    /// The answer the worker gives a Liked Songs cache read for
+    /// `account_id`: whether it found a cache, or `None` for no answer.
+    fn liked_cache_answer(
+        runtime: &tokio::runtime::Runtime,
+        worker: &mut Worker,
+        events: &std::sync::mpsc::Receiver<Event>,
+        account_id: &str,
+    ) -> Option<bool> {
+        let (commands, receiver) = mpsc::unbounded_channel();
+        commands
+            .send(Command::LoadLikedSongsCache {
+                account_id: account_id.into(),
+                generation: 1,
+            })
+            .unwrap();
+        commands.send(Command::Shutdown).unwrap();
+        runtime.block_on(async {
+            worker.run(receiver).await;
+            for _ in 0..200 {
+                for event in events.try_iter() {
+                    if let Event::LikedSongsCache {
+                        account_id: answered,
+                        cache,
+                        ..
+                    } = event
+                        && answered == account_id
+                    {
+                        return Some(cache.is_some());
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            None
+        })
+    }
+
+    /// Liked Songs waits on its cache read, so the read answers before the
+    /// shared app has said whose account it serves, and answers empty for
+    /// an account the shared app names otherwise.
+    #[test]
+    fn liked_cache_read_answers_before_the_shared_app_verifies() {
+        let (runtime, mut unverified, events) = worker("liked-cache-unverified");
+        assert!(unverified.api.account().is_none());
+        assert!(unverified.owns_cache("alice"));
+        assert_eq!(
+            liked_cache_answer(&runtime, &mut unverified, &events, "alice"),
+            Some(false)
+        );
+
+        let (runtime, mut verified, events) = worker("liked-cache-other-account");
+        {
+            let _entered = runtime.enter();
+            verify(&mut verified, ApiSource::Shared, "alice");
+        }
+        assert!(verified.owns_cache("alice"));
+        assert!(!verified.owns_cache("bob"));
+        assert_eq!(
+            liked_cache_answer(&runtime, &mut verified, &events, "bob"),
+            Some(false)
         );
     }
 

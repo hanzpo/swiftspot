@@ -50,8 +50,17 @@ Lyrics, artwork, pages and audio are cached on disk.
 
 ## Install
 
-You need macOS 26 or later on Apple silicon, Swift 6.2 (Xcode 26), and
-Rust ([mise](https://mise.jdx.dev) installs the right version).
+SwiftSpot needs macOS 26 or later on Apple silicon.
+
+```sh
+brew install hanzpo/tap/swiftspot
+```
+
+Sign in with Spotify in the browser it opens.
+
+### Build it yourself
+
+You need Swift 6.2 (Xcode 26) and Rust ([mise](https://mise.jdx.dev) installs the right version).
 
 ```sh
 git clone https://github.com/hanzpo/swiftspot
@@ -62,7 +71,11 @@ apple/install.sh
 
 The script builds the engine and the app, signs them with your Apple
 Development certificate if you have one, installs `SwiftSpot.app` into
-`/Applications` and opens it. Sign in with Spotify in the browser it opens.
+`/Applications` and opens it.
+
+`apple/release.sh` publishes a release: it signs the app with a Developer
+ID, has Apple notarize it, attaches it to a GitHub release and updates the
+cask in [hanzpo/homebrew-tap](https://github.com/hanzpo/homebrew-tap).
 
 ### Your own Spotify app (optional)
 

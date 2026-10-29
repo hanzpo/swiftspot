@@ -2,15 +2,18 @@ cask "swiftspot" do
   version "@VERSION@"
   sha256 "@MACOS_SHA256@"
 
-  url "https://github.com/hanzpo/swiftspot/releases/download/v#{version}/swiftspot-v#{version}-macos-universal.dmg"
+  url "https://github.com/hanzpo/swiftspot/releases/download/v#{version}/SwiftSpot-#{version}.zip"
   name "SwiftSpot"
   desc "Native Spotify client"
-  homepage "https://spotifast.rocks"
+  homepage "https://github.com/hanzpo/swiftspot"
 
   livecheck do
     url :url
     strategy :github_latest
   end
+
+  depends_on arch: :arm64
+  depends_on macos: :tahoe
 
   app "SwiftSpot.app"
 

@@ -16,7 +16,8 @@
 # another .icns file to use that instead. Set APP_DIR to
 # install somewhere other than /Applications. The bundle is signed with
 # this Mac's Apple Development certificate when it has one, or
-# CODESIGN_IDENTITY when set ("-" signs ad hoc). A running SwiftSpot is quit
+# CODESIGN_IDENTITY when set ("-" signs ad hoc), with the hardened runtime
+# that notarization asks for. A running SwiftSpot is quit
 # first and the new one opened afterwards. BUILD_ONLY=1 builds and checks
 # the bundle without installing it.
 set -euo pipefail
@@ -32,6 +33,8 @@ if [ -z "${CODESIGN_IDENTITY:-}" ]; then
         | head -n1)"
 fi
 identity="${CODESIGN_IDENTITY:--}"
+sign=(codesign --force --options runtime --sign "$identity")
+[ "$identity" = - ] || sign+=(--timestamp)
 
 if [ -z "${ICON:-}" ]; then
     iconset="$(mktemp -d)/AppIcon.iconset"
@@ -52,7 +55,7 @@ engine="$here/.build/SwiftSpot Engine.app"
 "$root/packaging/macos/bundle.sh" "$root/target/release/swiftspot" "$engine" "$version" >/dev/null
 /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$engine/Contents/Info.plist"
 cp "$ICON" "$engine/Contents/Resources/swiftspot.icns"
-codesign --force --sign "$identity" "$engine"
+"${sign[@]}" "$engine"
 
 # The front end around it.
 (cd "$here" && swift build -c release)
@@ -63,7 +66,7 @@ cp "$(cd "$here" && swift build -c release --show-bin-path)/SwiftSpot" "$bundle/
 sed "s/__VERSION__/$version/g" "$here/Packaging/Info.plist" > "$bundle/Contents/Info.plist"
 cp "$ICON" "$bundle/Contents/Resources/AppIcon.icns"
 mv "$engine" "$bundle/Contents/Helpers/"
-codesign --force --sign "$identity" "$bundle"
+"${sign[@]}" "$bundle"
 codesign --verify --deep --strict "$bundle"
 
 # BUILD_ONLY stops here, with the bundle built and checked.

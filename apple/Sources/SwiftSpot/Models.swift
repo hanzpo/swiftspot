@@ -333,7 +333,12 @@ struct Hello: Codable, Sendable {
     var signedIn: Bool
     var auth: String?
     var authError: String?
+    var signInProblem: String?
     var signInUrl: String?
+    var clientId: String?
+    var webApp: String?
+    var sharedGrant: Bool?
+    var redirectUri: String?
     var user: User?
 }
 

@@ -55,7 +55,8 @@ struct Cli {
     /// `windows-taskbar`, `lyrics`, `lyrics-fullscreen`, `collection-loading`,
     /// `shuffle-selected`, `shuffle-started`, `undated-mix`, `signed-out`, `connecting`, `library-list`,
     /// `library-list-narrow`, `library-list-wide`, `library-grid`, `library-grid-narrow`,
-    /// or `library-grid-wide`.
+    /// `library-grid-wide`, `sign-in-returning`, `sign-in-unknown-client`, `sign-in-not-allowed`,
+    /// `sign-in-shared-retired`, `waiting-for-browser`, `shared-grant`, or `own-app`.
     #[cfg(feature = "demo")]
     #[arg(long)]
     demo_show: Option<String>,

@@ -525,6 +525,8 @@ impl App {
                     self.settings.web_client_id =
                         (!client_id.is_empty()).then(|| client_id.to_string());
                 }
+                // Shown at once; the engine says what happens next.
+                self.auth = crate::backend::AuthStatus::Starting;
                 self.actions.push(Action::SignIn);
                 ok()
             }

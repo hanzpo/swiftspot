@@ -657,6 +657,6 @@ final class AppModel {
 
     // MARK: Account
 
-    func signIn() { send("auth.sign_in") }
+    func signIn(clientId: String) { send("auth.sign_in", ["client_id": clientId]) }
     func signOut() { send("auth.sign_out") }
 }

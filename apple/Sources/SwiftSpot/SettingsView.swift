@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// SwiftSpot's settings that a front end can change: playback, the
-/// equalizer, and Home's shelves.
+/// SwiftSpot's settings that a front end can change: the account and its
+/// Spotify app, playback, the equalizer, and Home's shelves.
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @State private var state: SettingsState?
@@ -12,6 +12,7 @@ struct SettingsView: View {
 
     var body: some View {
         TabView {
+            Tab("Account", systemImage: "person.crop.circle") { AccountSettings() }
             Tab("Playback", systemImage: "play.circle") { form(groups: ["Playback", "Home"]) }
             Tab("Equalizer", systemImage: "slider.vertical.3") { equalizer }
         }

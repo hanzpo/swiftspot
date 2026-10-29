@@ -29,7 +29,9 @@ words have been placed in time.
 
 | Method | Params | Answers |
 | --- | --- | --- |
-| `hello` | | app, version, signed-in user |
+| `hello` | | app, version, signed-in user, `auth`, `auth_error`, `sign_in_problem`, `client_id`, `web_app`, `shared_grant`, `redirect_uri` |
+| `auth.sign_in` | `client_id`? (saved for the next sign-in) | |
+| `auth.use_client_id` | `client_id` | |
 | `player.state` | | the player (same shape as the `player` event) |
 | `player.toggle`, `player.next`, `player.previous` | | |
 | `player.seek` | `position_ms` | |
@@ -48,6 +50,13 @@ words have been placed in time.
 | `playlist.get` | `id` | `playlist`, `tracks`, `total`, `more` |
 | `album.get` | `id` | `album`, `tracks`, `more` |
 | `page.more` | `page`, e.g. `playlist:ID`, `liked` | |
+
+`auth` is `starting`, `signed_out`, `waiting_for_browser`, `connecting`,
+`connected`, `failed` or `refused`. A refusal's `sign_in_problem` is
+`malformed_client_id`, `unknown_client`, `account_not_allowed`,
+`shared_retired` or `expired`, and `auth_error` explains it.
+`auth.use_client_id` moves a signed-in session to another Spotify app and
+opens the browser to authorize it.
 
 The player carries `karaoke`: `available`, `on`, `level`, and `status`
 (`off`, `downloading`, `preparing`, `running` or `failed`, with `error`).

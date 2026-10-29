@@ -114,13 +114,13 @@ impl SignInProblem {
     pub fn message(self) -> &'static str {
         match self {
             Self::MalformedClientId => {
-                "That doesn't look like a Client ID. It's 32 letters and digits, shown on your app's page in the dashboard."
+                "That doesn’t look like a Client ID. It’s 32 letters and digits, shown on your app’s page in the dashboard."
             }
             Self::UnknownClient => {
-                "Spotify doesn't know this Client ID. Copy it again from your app's page in the dashboard."
+                "Spotify doesn’t know this Client ID. Copy it again from your app’s page in the dashboard."
             }
             Self::AccountNotAllowed => {
-                "Spotify didn't let this account use the app. Sign in with the Spotify account that created it, which needs Premium."
+                "Spotify didn’t let this account use the app. Sign in with the Spotify account that created it, which needs Premium."
             }
             Self::SharedRetired => {
                 "Spotify no longer accepts the shared sign-in SwiftSpot used before. Set up your own Spotify app to keep listening."

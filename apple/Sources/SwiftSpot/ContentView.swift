@@ -308,56 +308,6 @@ struct Toast: View {
     }
 }
 
-// MARK: Signing in
-
-struct SignInView: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        let hello = model.hello
-        VStack(spacing: 18) {
-            Image(systemName: "music.note")
-                .font(.system(size: 48, weight: .semibold))
-                .foregroundStyle(.tint)
-            Text("Sign in to Spotify").font(.largeTitle.weight(.bold))
-            switch hello?.auth {
-            case "waiting_for_browser":
-                Text("Finish signing in in your browser.").foregroundStyle(.secondary)
-                if let url = hello?.signInUrl.flatMap(URL.init(string:)) {
-                    Link("Open the sign-in page again", destination: url)
-                }
-                Button("Cancel") { model.send("auth.cancel") }
-            case "connecting", "starting":
-                ProgressView("Connecting…")
-            default:
-                if let error = hello?.authError {
-                    Text(error).foregroundStyle(.red).multilineTextAlignment(.center)
-                }
-                Button {
-                    model.signIn()
-                } label: {
-                    Text("Sign In with Spotify").frame(minWidth: 200)
-                }
-                .buttonStyle(.glassProminent)
-                .controlSize(.extraLarge)
-            }
-        }
-        .padding(40)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task {
-            // The auth event says when it is done; asking keeps the page
-            // current through the browser round trip too.
-            while !Task.isCancelled, model.hello?.signedIn != true {
-                if let hello = try? await model.call("hello", as: Hello.self) {
-                    model.hello = hello
-                    if hello.signedIn { await model.refreshAll() }
-                }
-                try? await Task.sleep(for: .seconds(1))
-            }
-        }
-    }
-}
-
 // MARK: Playlist sheets
 
 struct NewPlaylistSheet: View {

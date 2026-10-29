@@ -720,6 +720,10 @@ fn play_here(app: &mut App) {
     app.local.position_ms = now.as_ref().map_or(0, |now| now.position_ms);
 }
 
+/// A Client ID of the right shape that Spotify never issued.
+#[cfg(feature = "demo")]
+const DEMO_CLIENT_ID: &str = "0123456789abcdef0123456789abcdef";
+
 #[cfg(feature = "demo")]
 pub fn apply_flags(app: &mut App, page: Option<&str>, show: Option<&str>) {
     if let Some(page) = page.and_then(Page::decode) {
@@ -771,6 +775,39 @@ pub fn apply_flags(app: &mut App, page: Option<&str>, show: Option<&str>) {
             "connecting" => {
                 app.auth = AuthStatus::Connecting;
                 app.user = None;
+            }
+            // Signing in again with a saved app, each refusal, and the wait
+            // for the browser.
+            "sign-in-returning" => {
+                app.auth = AuthStatus::SignedOut;
+                app.user = None;
+                app.settings.web_client_id = Some(DEMO_CLIENT_ID.into());
+            }
+            "sign-in-unknown-client" | "sign-in-not-allowed" | "sign-in-shared-retired" => {
+                use crate::backend::SignInProblem;
+                app.auth = AuthStatus::Refused(match surface {
+                    "sign-in-unknown-client" => SignInProblem::UnknownClient,
+                    "sign-in-not-allowed" => SignInProblem::AccountNotAllowed,
+                    _ => SignInProblem::SharedRetired,
+                });
+                app.user = None;
+                if surface != "sign-in-shared-retired" {
+                    app.settings.web_client_id = Some(DEMO_CLIENT_ID.into());
+                }
+            }
+            "waiting-for-browser" => {
+                app.auth = AuthStatus::WaitingForBrowser {
+                    url: "https://accounts.spotify.com/authorize".into(),
+                };
+                app.user = None;
+                app.settings.web_client_id = Some(DEMO_CLIENT_ID.into());
+            }
+            // Settings for a listener still on the shared grant, and for one
+            // using their own app.
+            "shared-grant" => app.shared_grant = true,
+            "own-app" => {
+                app.settings.web_client_id = Some(DEMO_CLIENT_ID.into());
+                app.web_app = Some(DEMO_CLIENT_ID.into());
             }
             "recents" => {
                 app.show_queue_panel = true;

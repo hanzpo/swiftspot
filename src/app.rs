@@ -528,6 +528,8 @@ pub struct App {
     /// A shared grant from before 0.14.2 is signed in: Spotify can stop
     /// accepting it at any time, so Settings offers the personal app.
     pub shared_grant: bool,
+    /// The proxy request that carries a sign-in, until the proxy is applied.
+    sign_in_request: Option<u64>,
     pending_remote_position: Option<(u32, Instant)>,
     pending_remote_volume: Option<PendingRemoteVolume>,
     remote_volume_request: u64,
@@ -975,6 +977,7 @@ impl App {
             sign_in_url: None,
             web_app: None,
             shared_grant: false,
+            sign_in_request: None,
             pending_remote_position: None,
             pending_remote_volume: None,
             remote_volume_request: 0,
@@ -3108,6 +3111,7 @@ impl App {
         let request = self.proxy_request;
         self.pending_proxy_preferences
             .insert(request, self.settings.proxy_preferences());
+        self.sign_in_request = sign_in.then_some(request);
         self.backend.send(if sign_in {
             Command::SignIn {
                 request,
@@ -3138,18 +3142,32 @@ impl App {
                 self.applied_proxy_preferences = preferences;
                 self.save_settings();
                 if restarted && self.local_ready {
-                    self.toast(gettext(self.locale, "Proxy applied. Restarting local playback."));
+                    self.toast(gettext(
+                        self.locale,
+                        "Proxy applied. Restarting local playback.",
+                    ));
                 } else {
                     self.toast(gettext(self.locale, "Proxy settings applied"));
                 }
             }
-            Err(error) => self.toast_error(
-                gettext(
+            Err(error) => {
+                let message = gettext(
                     self.locale,
                     "Proxy could not be applied: {error}. Previous connection settings are still in use.",
                 )
-                .replace("{error}", &error.to_string()),
-            ),
+                .replace("{error}", &error.to_string());
+                if self.sign_in_request == Some(request)
+                    && matches!(self.auth, AuthStatus::Starting)
+                {
+                    // The sign-in this request carried never started.
+                    self.auth = AuthStatus::Failed(message);
+                } else {
+                    self.toast_error(message);
+                }
+            }
+        }
+        if self.sign_in_request == Some(request) {
+            self.sign_in_request = None;
         }
     }
 
@@ -20496,6 +20514,7 @@ mod tests {
         .unwrap();
         assert_eq!(app.settings.web_client_id.as_deref(), Some(id));
         assert!(matches!(app.actions.as_slice(), [Action::SignIn]));
+        assert_eq!(app.api_hello()["auth"], "starting");
         assert!(
             call(
                 &mut app,

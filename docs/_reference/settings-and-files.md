@@ -67,8 +67,7 @@ It records non-secret revocation markers before deleting the protected entries
 and all legacy token files, including temporary copies. A locked store or
 filesystem failure is reported. Revocation markers prevent a failed protected
 entry deletion from restoring the session on restart; keep these markers when
-a deletion failed. Removing or changing a personal Client ID clears that app's
-old grant.
+a deletion failed. Changing the Client ID clears the old app's grant.
 
 Version 0.7.1 and earlier use the legacy unencrypted files listed above. Their
 Web API writer requests owner-only permissions for newly created Unix files;
@@ -253,7 +252,7 @@ main fields are:
 | `mono` | `false` | Play both channels the same; no longer set in the app, a saved value still applies |
 | `keep_playing_in_background` | `true` | Close to tray (Windows and Linux; macOS always quits) |
 | `mac_notch_widget` | `false` | Show interactive Now Playing widget when hovering over the MacBook notch (macOS only) |
-| `web_client_id` | none | Optional personal Spotify app id used alongside shared coverage |
+| `web_client_id` | none | The Client ID of your own Spotify app, which SwiftSpot signs in with |
 | `personal_app_nudge_at` | none | Legacy daily-reminder timestamp, retained for older releases |
 | `personal_app_intro_seen` | `false` | Whether the Premium personal-app introduction was dismissed or followed (available since 0.8.0) |
 | `proxy_mode` | `system` | `off`, `system`, `http`, or `socks`. Older files without this field stay on `system` |

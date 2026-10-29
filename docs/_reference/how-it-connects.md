@@ -9,12 +9,13 @@ nav_order: 1
 SwiftSpot uses separate credentials for Web API access, a personal app, and
 local playback:
 
-1. **The shared Web API app** keeps full catalogue and playlist coverage.
-2. **Your optional personal Web API app** handles supported playback, library,
-   catalog, catalogue search, playlist creation, and owned or collaborative
-   playlist requests without using the shared app's quota. Complete
-   playlist-library views and the playlist half of a search stay on the shared
-   app so Spotify-owned results are not filtered out. Both Web API grants must
+1. **Your own Web API app** answers the Web API. Every listener registers a
+   free app of their own and signs in with its Client ID.
+2. **The shared Web API app** is only for listeners who signed in before
+   SwiftSpot stopped offering it. Their grant keeps working until Spotify
+   refuses it, and no new one is ever made. While it lasts, complete
+   playlist-library views and the playlist half of a search stay on it so
+   Spotify-owned results are not filtered out. Both Web API grants must
    verify as the same Spotify account.
 3. **Local playback** uses
    [librespot](https://github.com/librespot-org/librespot). It needs one more
@@ -58,13 +59,16 @@ rejects a saved refresh grant, SwiftSpot removes that grant and asks for a new
 browser approval. Upgrading to protected storage does not itself require
 signing in again.
 
-By default, SwiftSpot uses the public app shared with spotify-player, ncspot,
-and Omarchy Spotify. Spotify divides its quota among all users. A personal app
-adds a separate Development Mode quota. See
-[Use a Personal Spotify App](/make-it-even-faster/).
+Signing in takes the Client ID of the listener's own app. SwiftSpot first
+asks Spotify's token endpoint whether it knows the ID, with a code that
+cannot be valid: an unknown client is refused as `invalid_client` and a
+real one as `invalid_grant`, so an unknown ID is reported before the browser
+opens. A sign-in the app's verification answers with 403 means the account
+is not the app's owner or lacks Premium. See
+[Your own Spotify app](/make-it-even-faster/).
 
 Since 0.8.0, a search runs as two requests when a
-personal app is ready: songs, artists, albums, podcasts, and episodes on the
+personal app is ready and a shared grant is still signed in: songs, artists, albums, podcasts, and episodes on the
 personal app, and playlists on the shared app. This moves catalogue search off the quota Spotify divides among every user
 of the shared app. Each half is shown the moment it
 arrives, so a shared app waiting out a rate limit no longer holds up the songs,
@@ -77,10 +81,6 @@ parts finish. A personal app answers
 with ten results for each type where the shared app answers with twenty, because
 Development Mode rejects the larger page. Without a personal app, one request
 still asks for all six types and nothing about a search changes.
-
-Since 0.8.0, verified Premium accounts using shared access see a
-one-time introduction to that option. Setup and dismissal are remembered in
-settings. The prompt uses the existing account profile and adds no request.
 
 Since 0.8.0, explicitly sorting a Library section loads its remaining
 pages through the existing Web API grant, one at a time, while loaded entries

@@ -31,15 +31,14 @@ SwiftSpot uses the Web API for:
   next, previous, seek, shuffle, repeat, volume, and reading or adding to the
   queue.
 
-Users of the default app share Spotify's quota. SwiftSpot limits heavy
-requests and pauses a session when Spotify sends a `Retry-After` response.
+Each listener signs in with their own app, which has its own quota.
+SwiftSpot limits heavy requests and pauses a session when Spotify sends a
+`Retry-After` response.
 
 Spotify also limits apps created since November 2024. These apps cannot access
 Spotify-owned playlists, related artists, recommendations, or audio features.
-This is why a personal app cannot handle every request. Complete playlist
-library views stay on the shared app. Playlists other people own, and every
-playlist when there is no personal app, are read over the librespot session
-while local playback is signed in. See [How It Connects](/how-it-connects/).
+So playlists other people own, and the account's own playlists, are read
+over the librespot session while local playback is signed in. See [How It Connects](/how-it-connects/).
 
 ## librespot session
 

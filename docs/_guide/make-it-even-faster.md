@@ -1,6 +1,6 @@
 ---
-title: Make It Even Faster
-description: "Scrolling performance and reducing loading delays with your own Spotify connection."
+title: Your Own Spotify App
+description: "Setting up the Spotify app SwiftSpot signs in with, and scrolling performance."
 nav_order: 6
 ---
 
@@ -15,70 +15,41 @@ your chosen sort, pins, and folders.
 The main window draws as needed and uses the platform's frame pacing. The
 MilkDrop frame-rate setting applies to its separate visualizer window.
 
-## API rate limits
+## Your own Spotify app
 
-Spotify limits how often apps can ask for information. SwiftSpot normally
-shares this allowance with other listeners and several other music players.
-When that shared connection is busy, your library and search results can take
-longer to load. The top bar shows a spinner while you wait.
+SwiftSpot signs in through a free Spotify app of your own, registered on
+Spotify's developer website. You do not write code or install anything
+else. The app SwiftSpot used to share no longer takes new sign-ins, and
+Spotify gives no single app the allowance to serve everyone.
 
-You can reduce those delays by creating a **personal Spotify app**. This is
-a connection registered to your account on Spotify's developer website.
-You do not need to write code or install another player.
-
-SwiftSpot offers this setup once after you sign in with Premium. Choose
-**Set up personal app** to open Settings, or **Keep shared app** to continue
-as you are. You can set it up later in Settings.
-
-A personal app gives many of your searches and library requests a separate
-allowance. Creating one is free and takes a few minutes, and Spotify requires
-a Premium account. If you create several personal apps, they share your
-account's allowance, following Spotify's
-[July 2026 quota update](https://developer.spotify.com/blog/2026-07-23-web-api-quota-updates).
-Some features still use the shared connection, and your personal connection
-has limits too.
-
-## Shared coverage stays active
-
-Your personal connection searches songs, artists, albums, podcasts, and
-episodes. The shared connection finds playlists and supplies features Spotify
-does not make available to personal apps, such as recommendations and related
-artists. Search results appear as each part is ready, so a delayed playlist
-search does not hold up the songs.
-
-Spotify allows personal apps ten search results at a time for each type,
-compared with twenty on the shared connection.
-
-Setting up playback on this computer also helps playlists load faster.
-SwiftSpot can load playlists that would otherwise use the shared allowance
-through its music connection instead.
-[How it connects](/how-it-connects/) explains which connection each feature uses.
-
-## Make a Spotify app
+The sign-in screen walks you through it:
 
 1. Open the [Spotify developer dashboard](https://developer.spotify.com/dashboard)
-   and sign in with your Spotify account. Spotify asks that it be a
-   Premium account.
-2. Click **Create app**. Any name and description will do; nobody else
-   sees them.
-3. Under **Redirect URIs**, add exactly:
+   and click **Create app**. Any name will do. Spotify asks that the account
+   have Premium.
+2. Under **Redirect URIs**, add exactly `http://127.0.0.1:8989/login`. The
+   sign-in screen has a **Copy** button for it.
+3. Under **APIs used**, tick **Web API**, accept the terms, and save.
+4. Paste the app's **Client ID** into the sign-in screen and click
+   **Sign In with Spotify**.
 
-   ```
-   http://127.0.0.1:8989/login
-   ```
+SwiftSpot checks with Spotify that it knows the Client ID before your
+browser opens. If Spotify then shows "Invalid redirect URI", the address in
+step 2 is missing or differs; fix it in the dashboard and sign in again.
+Spotify lets only the account that created the app use it.
 
-4. Tick **Web API**, accept the terms, and save.
-5. The app's page shows its **Client ID**. Copy it.
+To move to another app later, open **Settings ▸ Account** and click
+**Change…**.
 
-![Settings, with a personal Spotify app in use](/assets/images/make-it-even-faster.png)
+## API rate limits
 
-## Use it in SwiftSpot
+Spotify limits how often an app can ask for information. If you create
+several apps, they share your account's allowance, following Spotify's
+[July 2026 quota update](https://developer.spotify.com/blog/2026-07-23-web-api-quota-updates).
+Apps created since November 2024 cannot read Spotify-owned playlists,
+recommendations or related artists. Setting up playback on this computer
+lets SwiftSpot read playlists through its music connection instead.
+[How it connects](/how-it-connects/) explains which connection each
+feature uses.
 
-1. Open **Settings**, find **Personal Spotify app**, and paste the
-   Client ID.
-2. Click **Authorize**. Your browser opens Spotify's sign-in for your app.
-   SwiftSpot verifies that it belongs to the same Spotify account, then shows
-   **Personal app ready**.
-
-Your playback setup stays the same. Select **Remove** to stop using your
-personal connection and return to shared access.
+Spotify allows these apps ten search results at a time for each type.

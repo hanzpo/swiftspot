@@ -56,7 +56,7 @@ SwiftSpot needs macOS 26 or later on Apple silicon.
 brew install hanzpo/tap/swiftspot
 ```
 
-Sign in with Spotify in the browser it opens.
+Sign in with your own Spotify app, as described below.
 
 ### Build it yourself
 
@@ -77,17 +77,13 @@ Development certificate if you have one, installs `SwiftSpot.app` into
 ID, has Apple notarize it, attaches it to a GitHub release and updates the
 cask in [hanzpo/homebrew-tap](https://github.com/hanzpo/homebrew-tap).
 
-### Your own Spotify app (optional)
+### Your own Spotify app
 
-Out of the box, SwiftSpot shares a public Web API app with other clients,
-and that app is often rate-limited. To use one of your own:
-
-1. Create an app at
-   [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard),
-   with the redirect URI `http://127.0.0.1:8989/login` and the Web API.
-2. Put its client ID in
-   `~/Library/Application Support/com.hanzpo.swiftspot/settings.json` as
-   `"web_client_id": "…"`, then restart SwiftSpot.
+SwiftSpot signs in through a free Spotify app of your own; the sign-in
+screen walks you through making one. In short: create an app at
+[developer.spotify.com/dashboard](https://developer.spotify.com/dashboard)
+with the redirect URI `http://127.0.0.1:8989/login` and the Web API, then
+paste its Client ID into SwiftSpot. Settings ▸ Account changes it later.
 
 ## Karaoke
 

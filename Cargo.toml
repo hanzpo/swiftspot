@@ -246,8 +246,10 @@ hyper-proxy2 = { git = "https://github.com/crmne/hyper-proxy2", rev = "efca48113
 # fallback, an in-memory credential cache for platform storage, full
 # playback-state recovery after a session disconnect, the desktop platform
 # signature for Windows on ARM, a volume set while the device is inactive,
-# audio key requests asked again when they time out, and no decoding of a
-# file still encrypted (hanzpo/librespot's swiftspot branch, on top of
+# audio key requests asked again when they time out, no decoding of a
+# file still encrypted, the dealer connection through the configured proxy,
+# tokens and credentials kept out of Debug output, and a bounded handshake
+# packet size (hanzpo/librespot's swiftspot branch, on top of
 # crmne/librespot's pinned 0.8 branch; the key retries answer
 # librespot-org/librespot#1649).
 # Recovery is proposed upstream in librespot-org/librespot#1765 and the
@@ -255,10 +257,10 @@ hyper-proxy2 = { git = "https://github.com/crmne/hyper-proxy2", rev = "efca48113
 # librespot-org/librespot#1737.
 # Every librespot crate comes from the
 # fork so one copy exists. Drop patches as upstream takes them.
-librespot-audio = { git = "https://github.com/hanzpo/librespot", rev = "fd5ab794e1222a48a46caf478eade97320840cc7" }
-librespot-connect = { git = "https://github.com/hanzpo/librespot", rev = "fd5ab794e1222a48a46caf478eade97320840cc7" }
-librespot-core = { git = "https://github.com/hanzpo/librespot", rev = "fd5ab794e1222a48a46caf478eade97320840cc7" }
-librespot-metadata = { git = "https://github.com/hanzpo/librespot", rev = "fd5ab794e1222a48a46caf478eade97320840cc7" }
-librespot-oauth = { git = "https://github.com/hanzpo/librespot", rev = "fd5ab794e1222a48a46caf478eade97320840cc7" }
-librespot-playback = { git = "https://github.com/hanzpo/librespot", rev = "fd5ab794e1222a48a46caf478eade97320840cc7" }
-librespot-protocol = { git = "https://github.com/hanzpo/librespot", rev = "fd5ab794e1222a48a46caf478eade97320840cc7" }
+librespot-audio = { git = "https://github.com/hanzpo/librespot", rev = "08cc7ca025f78aed5cda2975f6f93c0b0d8ff59b" }
+librespot-connect = { git = "https://github.com/hanzpo/librespot", rev = "08cc7ca025f78aed5cda2975f6f93c0b0d8ff59b" }
+librespot-core = { git = "https://github.com/hanzpo/librespot", rev = "08cc7ca025f78aed5cda2975f6f93c0b0d8ff59b" }
+librespot-metadata = { git = "https://github.com/hanzpo/librespot", rev = "08cc7ca025f78aed5cda2975f6f93c0b0d8ff59b" }
+librespot-oauth = { git = "https://github.com/hanzpo/librespot", rev = "08cc7ca025f78aed5cda2975f6f93c0b0d8ff59b" }
+librespot-playback = { git = "https://github.com/hanzpo/librespot", rev = "08cc7ca025f78aed5cda2975f6f93c0b0d8ff59b" }
+librespot-protocol = { git = "https://github.com/hanzpo/librespot", rev = "08cc7ca025f78aed5cda2975f6f93c0b0d8ff59b" }

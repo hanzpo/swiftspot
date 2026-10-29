@@ -1,4 +1,4 @@
-//! Spotifast's internals, exposed so diagnostics and tests can reach them.
+//! SwiftSpot's internals, exposed so diagnostics and tests can reach them.
 
 pub mod api;
 pub mod app;

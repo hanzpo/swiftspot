@@ -1233,7 +1233,7 @@ pub enum Action {
     ClearArtCache,
     /// Clear local play history.
     ClearPlayHistory,
-    /// Windows: draw Spotifast's own title bar instead of the standard one.
+    /// Windows: draw SwiftSpot's own title bar instead of the standard one.
     SetCustomTitlebar(bool),
     /// Switch the equalizer's effect on the sound on or off.
     ToggleEq,

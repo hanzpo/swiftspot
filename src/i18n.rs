@@ -1,4 +1,4 @@
-//! Interface strings. Spotifast is English-only: these helpers return the
+//! Interface strings. SwiftSpot is English-only: these helpers return the
 //! English source text, choosing the singular or plural form by count, and
 //! keep the call sites free of hand-built plurals.
 

@@ -80,7 +80,7 @@ mod mac_impl {
 
     thread_local! {
         /// The object the menu items call. Only the main thread touches it.
-        static HANDLER: OnceCell<Retained<SpotifastMenuHandler>> = const { OnceCell::new() };
+        static HANDLER: OnceCell<Retained<SwiftSpotMenuHandler>> = const { OnceCell::new() };
     }
 
     pub fn set_waker(wake: impl Fn() + Send + Sync + 'static) {
@@ -138,10 +138,10 @@ mod mac_impl {
     define_class!(
         #[unsafe(super(NSObject))]
         #[thread_kind = MainThreadOnly]
-        #[name = "SpotifastMenuHandler"]
-        pub struct SpotifastMenuHandler;
+        #[name = "SwiftSpotMenuHandler"]
+        pub struct SwiftSpotMenuHandler;
 
-        impl SpotifastMenuHandler {
+        impl SwiftSpotMenuHandler {
             #[unsafe(method(openSettings:))]
             fn open_settings(&self, _sender: &NSObject) {
                 push_command(MenuCommand::Settings);
@@ -416,8 +416,8 @@ mod mac_impl {
             return;
         }
 
-        let handler: Retained<SpotifastMenuHandler> =
-            unsafe { objc2::msg_send![mtm.alloc::<SpotifastMenuHandler>(), init] };
+        let handler: Retained<SwiftSpotMenuHandler> =
+            unsafe { objc2::msg_send![mtm.alloc::<SwiftSpotMenuHandler>(), init] };
         let target: &NSObject = &handler;
 
         // 1. Settings item in app menu (first menu)

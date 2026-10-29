@@ -276,7 +276,7 @@ pub struct App {
     /// The window should close and reopen at once: Windows fixes a window's
     /// decorations when it is created.
     pub reopen_intent: bool,
-    /// Commands from control clients (a second `spotifast <verb>` launch,
+    /// Commands from control clients (a second `swiftspot <verb>` launch,
     /// a Raycast script, a link the desktop opens). Drained every frame.
     control_commands: Option<std::sync::Arc<std::sync::Mutex<Vec<ControlCommand>>>>,
     /// Now-playing snapshot for the control channel.
@@ -604,9 +604,9 @@ const HOME_PODCAST_SHOWS: usize = 8;
 const RECENTS_PAGE: u32 = 50;
 
 /// Who the desktop's media controls belong to. Links to Spotify, as
-/// `spotify:` URIs or web addresses, are what they may ask Spotifast to open.
+/// `spotify:` URIs or web addresses, are what they may ask SwiftSpot to open.
 fn media_app() -> fastframe_now_playing::App {
-    let mut app = fastframe_now_playing::App::new("spotifast", "SwiftSpot");
+    let mut app = fastframe_now_playing::App::new("swiftspot", "SwiftSpot");
     app.uri_schemes = vec!["spotify".into(), "https".into(), "http".into()];
     app
 }
@@ -666,12 +666,12 @@ fn play_pause_label(playing: bool) -> &'static str {
     if playing { "Pause" } else { "Play" }
 }
 
-/// The tray item: Spotifast's icon, and a menu that shows or hides the
+/// The tray item: SwiftSpot's icon, and a menu that shows or hides the
 /// window, controls playback and quits.
 fn tray_config() -> fastframe_tray::Config {
     use fastframe_tray::MenuItem;
     fastframe_tray::Config {
-        id: "spotifast",
+        id: "swiftspot",
         title: "SwiftSpot".into(),
         icon: util::app_icon_rgba,
         template_icon: Some(util::tray_template_rgba),
@@ -1025,7 +1025,7 @@ impl App {
         self.hide_intent = false;
         self.wants_show = false;
         self.reopen_intent = false;
-        // A new window starts titled "Spotifast"; name the playing song
+        // A new window starts titled "SwiftSpot"; name the playing song
         // again rather than trust what the replaced window was told.
         self.window_title.clear();
         if let Some(tray) = &mut self.tray {
@@ -7407,7 +7407,7 @@ impl App {
 
     /// `settle` is false while the slider is still moving: the level is heard
     /// at once, and Spotify is told where it ended up on release.
-    /// Whether the playing device takes volume changes from Spotifast.
+    /// Whether the playing device takes volume changes from SwiftSpot.
     /// Spotify refuses them for some remote devices, so the controls are
     /// disabled for those rather than failing when used.
     pub fn can_set_volume(&self) -> bool {
@@ -14460,7 +14460,7 @@ mod tests {
         );
     }
 
-    /// If Spotify returns an unchanged queue order after shuffle, Spotifast
+    /// If Spotify returns an unchanged queue order after shuffle, SwiftSpot
     /// retries up to the limit and then accepts the result as a bounded fallback.
     #[test]
     fn unchanged_shuffle_result_has_bounded_fallback() {
@@ -14500,7 +14500,7 @@ mod tests {
             assert!(app.queue_recheck_at.is_some());
         }
 
-        // The next response exceeds the retry limit, so Spotifast accepts it.
+        // The next response exceeds the retry limit, so SwiftSpot accepts it.
         app.handle_api(ApiResponse::Queue {
             seq,
             result: Ok(unchanged_response),
@@ -15158,7 +15158,7 @@ mod tests {
 
     fn test_app(name: &str) -> App {
         let root =
-            std::env::temp_dir().join(format!("spotifast-{name}-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("swiftspot-{name}-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let mut app = App::new(
             &Waker::default(),
@@ -16367,7 +16367,7 @@ mod tests {
     #[test]
     fn the_queue_comes_back_after_a_restart() {
         let root = std::env::temp_dir().join(format!(
-            "spotifast-queue-restart-test-{}",
+            "swiftspot-queue-restart-test-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);
@@ -16623,7 +16623,7 @@ mod tests {
     }
 
     /// A replaced window, as when the title bar setting changes, is titled
-    /// with the playing song again, not left as "Spotifast".
+    /// with the playing song again, not left as "SwiftSpot".
     #[test]
     fn a_new_window_is_titled_with_the_playing_song() {
         let ctx = egui::Context::default();
@@ -16922,7 +16922,7 @@ mod tests {
         assert!(!app.window_hidden, "a window this app still owns");
 
         // #when something asks for the window: the Dock, the tray, or
-        // `spotifast show`
+        // `swiftspot show`
         let mut output = ctx.run_ui(Default::default(), |ui| {
             app.apply(Action::ShowWindow, ui.ctx());
         });
@@ -17329,7 +17329,7 @@ mod tests {
 
     fn headless_app() -> App {
         let root =
-            std::env::temp_dir().join(format!("spotifast-volume-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("swiftspot-volume-test-{}", std::process::id()));
         let dirs = AppDirs {
             config: root.join("config"),
             state: root.join("state"),
@@ -21534,7 +21534,7 @@ mod tests {
         app.selected_device = None;
         app.plays = crate::history::History::default();
         let state_dir =
-            std::env::temp_dir().join(format!("spotifast-repeat-history-{}", std::process::id()));
+            std::env::temp_dir().join(format!("swiftspot-repeat-history-{}", std::process::id()));
         app.dirs.state = state_dir.clone();
         for sequence in [1, 2] {
             app.handle_local(LocalState {
@@ -22624,10 +22624,10 @@ mod tests {
     #[test]
     fn mpris_search_links_open_search_on_a_private_bus() {
         use std::time::{Duration, Instant};
-        const CHILD: &str = "SPOTIFAST_SEARCH_PRIVATE_BUS";
+        const CHILD: &str = "SWIFTSPOT_SEARCH_PRIVATE_BUS";
         if std::env::var_os(CHILD).is_none() {
             let root = std::env::temp_dir().join(format!(
-                "spotifast-search-bus-{:016x}",
+                "swiftspot-search-bus-{:016x}",
                 rand::random::<u64>()
             ));
             std::fs::create_dir(&root).unwrap();
@@ -22668,7 +22668,7 @@ mod tests {
             .unwrap();
         let call = |uri: &str| {
             client.call_method(
-                Some("org.mpris.MediaPlayer2.spotifast"),
+                Some("org.mpris.MediaPlayer2.swiftspot"),
                 "/org/mpris/MediaPlayer2",
                 Some("org.mpris.MediaPlayer2.Player"),
                 "OpenUri",
@@ -22695,7 +22695,7 @@ mod tests {
         assert!(matches!(app.actions.as_slice(), [Action::OpenLink(_)]));
         let schemes: Vec<String> = zbus::blocking::Proxy::new(
             &client,
-            "org.mpris.MediaPlayer2.spotifast",
+            "org.mpris.MediaPlayer2.swiftspot",
             "/org/mpris/MediaPlayer2",
             "org.mpris.MediaPlayer2",
         )
@@ -22872,7 +22872,7 @@ mod tests {
     #[test]
     fn the_last_playlist_tree_stays_visible_for_its_account() {
         let root = std::env::temp_dir().join(format!(
-            "spotifast-rootlist-restart-test-{}",
+            "swiftspot-rootlist-restart-test-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);

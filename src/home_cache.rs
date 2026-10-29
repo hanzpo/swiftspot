@@ -259,7 +259,7 @@ mod tests {
 
     #[tokio::test]
     async fn another_accounts_or_a_damaged_cache_is_a_miss() {
-        let dir = std::env::temp_dir().join(format!("spotifast-home-cache-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("swiftspot-home-cache-{}", std::process::id()));
         let path = dir.join("home.json");
         let cache = Cache::capture("alice".into(), &home_with_shelves(), &Library::default());
         write(&path, &cache).await.unwrap();

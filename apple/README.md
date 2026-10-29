@@ -15,7 +15,7 @@ socket:
 
 ```sh
 cargo run --features demo -- --demo &
-SWIFTSPOT_SOCKET=$(ls -d "$TMPDIR"spotifast-demo-*/state/api.sock | tail -1) swift run
+SWIFTSPOT_SOCKET=$(ls -d "$TMPDIR"swiftspot-demo-*/state/api.sock | tail -1) swift run
 ```
 
 ## The API

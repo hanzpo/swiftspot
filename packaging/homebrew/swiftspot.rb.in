@@ -1,9 +1,9 @@
-cask "spotifast" do
+cask "swiftspot" do
   version "@VERSION@"
   sha256 "@MACOS_SHA256@"
 
-  url "https://github.com/crmne/spotifast/releases/download/v#{version}/spotifast-v#{version}-macos-universal.dmg"
-  name "Spotifast"
+  url "https://github.com/hanzpo/swiftspot/releases/download/v#{version}/swiftspot-v#{version}-macos-universal.dmg"
+  name "SwiftSpot"
   desc "Native Spotify client"
   homepage "https://spotifast.rocks"
 
@@ -12,7 +12,7 @@ cask "spotifast" do
     strategy :github_latest
   end
 
-  app "Spotifast.app"
+  app "SwiftSpot.app"
 
   zap trash: [
     "~/Library/Application Support/com.hanzpo.swiftspot",

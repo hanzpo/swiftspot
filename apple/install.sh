@@ -49,9 +49,9 @@ fi
 # it, kept out of the Dock.
 (cd "$root" && cargo build --release --locked)
 engine="$here/.build/SwiftSpot Engine.app"
-"$root/packaging/macos/bundle.sh" "$root/target/release/spotifast" "$engine" "$version" >/dev/null
+"$root/packaging/macos/bundle.sh" "$root/target/release/swiftspot" "$engine" "$version" >/dev/null
 /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$engine/Contents/Info.plist"
-cp "$ICON" "$engine/Contents/Resources/spotifast.icns"
+cp "$ICON" "$engine/Contents/Resources/swiftspot.icns"
 codesign --force --sign "$identity" "$engine"
 
 # The front end around it.

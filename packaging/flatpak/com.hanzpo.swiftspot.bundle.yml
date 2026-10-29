@@ -1,0 +1,37 @@
+# The release workflow's Flatpak: the binary the Linux job built, packaged
+# into the same sandbox as com.hanzpo.swiftspot.yml describes. The
+# job unpacks the release tarball into built/ beside this file first.
+id: com.hanzpo.swiftspot
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+command: swiftspot
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  - --socket=pulseaudio
+  - --share=network
+  # Platform storage for this application's Spotify grants.
+  - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --own-name=org.mpris.MediaPlayer2.swiftspot
+  - --persist=.local/state
+modules:
+  - name: swiftspot
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 swiftspot /app/bin/swiftspot
+      - install -Dm644 packaging/applications/*.desktop /app/share/applications/com.hanzpo.swiftspot.desktop
+      - sed -i 's/^Icon=.*$/Icon=com.hanzpo.swiftspot/;s/^StartupWMClass=swiftspot$/StartupWMClass=com.hanzpo.swiftspot/' /app/share/applications/com.hanzpo.swiftspot.desktop
+      - install -Dm644 packaging/icons/*.svg /app/share/icons/hicolor/scalable/apps/com.hanzpo.swiftspot.svg
+      - install -Dm644 packaging/flatpak/com.hanzpo.swiftspot.metainfo.xml /app/share/metainfo/com.hanzpo.swiftspot.metainfo.xml
+      - install -Dm644 LICENSE /app/share/licenses/swiftspot/LICENSE
+    sources:
+      - type: dir
+        path: built
+      # Metainfo belongs to this packaging checkout, not the portable archive.
+      - type: file
+        path: com.hanzpo.swiftspot.metainfo.xml
+        dest: packaging/flatpak

@@ -1,6 +1,6 @@
-# Contributing to Spotifast
+# Contributing to SwiftSpot
 
-Spotifast is a native Spotify client. Changes should improve the
+SwiftSpot is a native Spotify client. Changes should improve the
 desktop app without adding a browser, fallback services, or another backend.
 
 ## Before opening an issue
@@ -16,13 +16,13 @@ project.
 Some boundaries come from Spotify or from upstream libraries:
 
 - Local playback requires Spotify Premium because librespot requires it.
-- Spotify Lossless is not available through librespot. Spotifast will
+- Spotify Lossless is not available through librespot. SwiftSpot will
   reconsider it if librespot gains lawful upstream support; proposals that
   depend on bypassing Spotify's DRM are out of scope.
 - Spotify tracks must come from Spotify. Substituting audio from YouTube,
   Piped, `yt-dlp`, or another catalogue is out of scope.
-- Spotifast will not embed a browser engine, add telemetry, or introduce a
-  Spotifast-operated service.
+- SwiftSpot will not embed a browser engine, add telemetry, or introduce a
+  SwiftSpot-operated service.
 
 [What Spotify Lets a Client Do](docs/_reference/what-spotify-allows.md)
 lists what each of the three surfaces offers and the requests none of them
@@ -84,7 +84,7 @@ implementation and regression tests live in the Copilot Triage repository.
 
 ## Pull requests
 
-Keep each pull request to one change. Explain why it belongs in Spotifast,
+Keep each pull request to one change. Explain why it belongs in SwiftSpot,
 what changed, and how you tested it. Avoid unrelated formatting, refactors,
 generated prose, and large mechanical rewrites.
 

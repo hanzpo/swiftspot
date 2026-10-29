@@ -101,7 +101,7 @@ seconds and is remembered; the next song in the queue is done ahead.
 
 SwiftSpot is a fork of [Spotifast](https://github.com/crmne/spotifast) by
 Carmine Paolino, whose Rust client is the engine here, and it keeps
-Spotifast's MIT license. It plays through
+SwiftSpot's MIT license. It plays through
 [librespot](https://github.com/librespot-org/librespot).
 
 SwiftSpot is an independent project and is not affiliated with Spotify or

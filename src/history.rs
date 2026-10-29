@@ -1,6 +1,6 @@
 //! Local play history.
 //!
-//! Spotify does not record playback from librespot clients. Spotifast stores
+//! Spotify does not record playback from librespot clients. SwiftSpot stores
 //! local plays and merges them with `/me/player/recently-played`, which covers
 //! other devices. A track counts only after enough listening time, so skips do
 //! not fill the history.
@@ -374,7 +374,7 @@ mod tests {
     #[test]
     fn a_saved_history_reads_back_whole() {
         let dir =
-            std::env::temp_dir().join(format!("spotifast-history-{:016x}", rand::random::<u64>()));
+            std::env::temp_dir().join(format!("swiftspot-history-{:016x}", rand::random::<u64>()));
         let path = dir.join("history.json");
         let at: jiff::Timestamp = "2026-09-01T09:00:00Z".parse().unwrap();
         let mut history = History::default();
@@ -404,7 +404,7 @@ mod tests {
     #[test]
     fn a_failed_save_keeps_the_history_to_write() {
         let dir =
-            std::env::temp_dir().join(format!("spotifast-history-{:016x}", rand::random::<u64>()));
+            std::env::temp_dir().join(format!("swiftspot-history-{:016x}", rand::random::<u64>()));
         std::fs::create_dir_all(&dir).unwrap();
         // A file where the history's folder should be: nothing can be
         // written under it.
@@ -435,7 +435,7 @@ mod tests {
     fn the_history_is_kept_from_other_accounts() {
         use std::os::unix::fs::PermissionsExt;
         let dir =
-            std::env::temp_dir().join(format!("spotifast-history-{:016x}", rand::random::<u64>()));
+            std::env::temp_dir().join(format!("swiftspot-history-{:016x}", rand::random::<u64>()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("history.json");
         for stale in [path.clone(), path.with_extension("json.tmp")] {

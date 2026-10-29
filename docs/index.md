@@ -1,10 +1,10 @@
 ---
 layout: home
-title: Spotifast
+title: SwiftSpot
 description: A fast, lightweight Spotify app for Linux, macOS, and Windows.
 permalink: /
 hero:
-  name: Spotifast
+  name: SwiftSpot
   text: Spotify, native and fast
   tagline: A lightweight Spotify app for Linux, macOS, and Windows. Listen on your computer, browse your music, and control your other devices.
   actions:
@@ -12,14 +12,14 @@ hero:
       text: Download
       link: /download/
     - theme: alt
-      text: What is Spotifast?
-      link: /what-is-spotifast/
+      text: What is SwiftSpot?
+      link: /what-is-swiftspot/
     - theme: alt
       text: GitHub
-      link: https://github.com/crmne/spotifast
+      link: https://github.com/hanzpo/swiftspot
   image:
     src: /screenshot.png
-    alt: "Spotifast Home with the playlist library, recommendations, queue, and player visible"
+    alt: "SwiftSpot Home with the playlist library, recommendations, queue, and player visible"
     width: 2018
     height: 1198
 
@@ -35,18 +35,18 @@ features:
     details: Browse playlists, Liked Songs, albums, artists, and podcasts. Search the catalogue and edit playlists you own.
   - icon: 🎨
     title: Themes
-    details: Choose light, dark, or your own colours. On Omarchy, Spotifast can follow your desktop theme as it changes, while the music keeps playing.
+    details: Choose light, dark, or your own colours. On Omarchy, SwiftSpot can follow your desktop theme as it changes, while the music keeps playing.
   - icon: ⌨️
     title: Desktop controls
     details: Use keyboard shortcuts and your keyboard's media keys. Keep the music playing after you close the window.
   - icon: 🔓
     title: Open source
     details: Free to use, study, and improve. Explore the code, report a problem, or help build the next version.
-    link: https://github.com/crmne/spotifast
+    link: https://github.com/hanzpo/swiftspot
     link_text: Read the source
 ---
 
-<video class="hero-film image-src" controls muted loop playsinline preload="metadata" poster="/assets/images/launch-film-poster.jpg" aria-label="Spotifast in a minute: a film of the app, made with its built-in demo content" hidden>
+<video class="hero-film image-src" controls muted loop playsinline preload="metadata" poster="/assets/images/launch-film-poster.jpg" aria-label="SwiftSpot in a minute: a film of the app, made with its built-in demo content" hidden>
   <source src="/assets/videos/launch-film.mp4" type="video/mp4">
 </video>
 
@@ -75,7 +75,7 @@ features:
 ## WhatsApp, just as fast
 
 **Want WhatsApp just as fast and native?** [ZapFast](https://zapfast.rocks) is
-Spotifast's sibling: the same native interface, for WhatsApp. Both are built on [fastframe](https://github.com/crmne/fastframe), the shared
+SwiftSpot's sibling: the same native interface, for WhatsApp. Both are built on [fastframe](https://github.com/crmne/fastframe), the shared
 foundation for native Rust apps built with egui.
 
 <style>

@@ -6,9 +6,9 @@ nav_order: 0
 
 ## Where things live
 
-Linux media controls use `playerctl --player=spotifast`.
+Linux media controls use `playerctl --player=swiftspot`.
 
-Spotifast follows each platform's conventions. On Linux:
+SwiftSpot follows each platform's conventions. On Linux:
 
 | What | Where | Safe to delete? |
 | --- | --- | --- |
@@ -28,7 +28,7 @@ Spotifast follows each platform's conventions. On Linux:
 | Karaoke's vocal model (macOS) | `~/Library/Caches/com.hanzpo.swiftspot/karaoke/` | Always; downloaded again when karaoke is next turned on |
 | Account-scoped playlist page cache | `~/.cache/swiftspot/playlists/<account-id>/` | Always |
 | Account-scoped Home shelves and library rows | `~/.cache/swiftspot/home/` | Always |
-| Last run's log | `~/.local/state/swiftspot/spotifast.log` | Always |
+| Last run's log | `~/.local/state/swiftspot/swiftspot.log` | Always |
 | Crash log | `~/.local/state/swiftspot/panic.log` | Always |
 
 Clearing caches never signs you out. Sign-out from Settings covers the shared
@@ -38,7 +38,7 @@ The following credential storage is available since 0.8.0.
 
 Durable grants use **Secret Service on Linux**, **Keychain on macOS**, and
 **Credential Manager on Windows**, under the service name
-`rocks.spotifast.Spotifast`. Entries are separated by application state
+`com.hanzpo.swiftspot`. Entries are separated by application state
 location and grant type; Web grants carry their Client ID and must verify as
 the same account. Playback and receiver activation require that account too.
 Non-secret settings and session data remain readable JSON. Native credential
@@ -55,10 +55,10 @@ used for this session, with no new plaintext fallback file.
 On upgrade, each legacy grant is written to the protected store and read back
 before its old file is removed. Valid grants migrate without signing in again.
 If Spotify rejects a saved refresh grant, only that grant is forgotten so the
-next launch cannot keep restoring it. If migration fails, Spotifast reports it and
+next launch cannot keep restoring it. If migration fails, SwiftSpot reports it and
 keeps the original so migration can be retried. That grant can still serve the
 current session. A successfully migrated grant is never replaced by a stale
-legacy copy. Librespot's reusable grant stays in memory until Spotifast saves
+legacy copy. Librespot's reusable grant stays in memory until SwiftSpot saves
 it through this same store. Volume and disposable audio caches are independent.
 
 Sign-out invalidates pending authorization, refresh, and playback connections,
@@ -88,13 +88,13 @@ Older proxy passwords, whether in `settings.json` or the separate state file,
 are migrated and read back before their plaintext copies are removed. If that
 fails, the originals remain available for retry. Settings changes stay in
 memory until migration succeeds, so a save cannot erase the only password or
-associate it with a different proxy address. Spotifast reports this condition.
+associate it with a different proxy address. SwiftSpot reports this condition.
 Newly entered passwords have no plaintext fallback. Settings store the confirmed
 proxy mode, host, port, and username, never an unapplied draft or password.
 
 Progress through a playlist is periodically cached as a contiguous prefix.
 When the playlist has not changed on Spotify, reopening it resumes from that
-prefix instead of requesting the same pages again. Spotifast validates the
+prefix instead of requesting the same pages again. SwiftSpot validates the
 cache against Spotify's playlist snapshot and reported song count before
 showing it. A cache with a mismatched count is replaced by live rows even if
 its snapshot matches, so stale cached songs cannot choose the playback order.
@@ -195,7 +195,7 @@ automatic requests and shows a Retry button in the reserved row space.
 Since 0.8.0, Flatpak also preserves the fallback
 state directory used when `XDG_STATE_HOME` is unset. Session state, history,
 logs, and credential revocation markers survive a full quit and relaunch under
-`~/.var/app/rocks.spotifast.Spotifast/.local/state/swiftspot/`. Configuration
+`~/.var/app/com.hanzpo.swiftspot/.local/state/swiftspot/`. Configuration
 and caches remain under the app's `config/` and `cache/` directories. State
 already lost on quitting an older release cannot be recovered.
 
@@ -207,14 +207,14 @@ On macOS, settings, state, and the logs are in
 `%LOCALAPPDATA%\hanzpo\swiftspot\cache`.
 
 The running copy keeps its single-instance files in a private directory:
-`$XDG_RUNTIME_DIR/spotifast` on Linux (inside Flatpak, the app's own runtime
-directory), a `spotifast` folder in your private temporary directory
+`$XDG_RUNTIME_DIR/swiftspot` on Linux (inside Flatpak, the app's own runtime
+directory), a `swiftspot` folder in your private temporary directory
 (`$TMPDIR`) on macOS, and an `instance` folder in the state directory on
 Windows. `instance.lock` marks the running copy; the system releases it when
-Spotifast quits or crashes. `instance.sock` (Linux and macOS) is the socket
-a second launch and the `spotifast` command reach it through, which only your
+SwiftSpot quits or crashes. `instance.sock` (Linux and macOS) is the socket
+a second launch and the `swiftspot` command reach it through, which only your
 user can open. On Windows, `instance.key` holds the loopback port and a
-random token that every request must carry. Spotifast writes them on each
+random token that every request must carry. SwiftSpot writes them on each
 start; nothing in them needs keeping.
 
 ## settings.json
@@ -224,12 +224,12 @@ main fields are:
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `device_name` | `Spotifast` | Name on Spotify Connect |
+| `device_name` | `SwiftSpot` | Name on Spotify Connect |
 | `bitrate` | `320` | 96, 160, or 320 kbps |
 | `normalisation` | `false` | Volume normalisation |
 | `autoplay` | `true` | Keep playing similar music at the end |
 | `gapless` | `true` | Gapless playback |
-| `audio_backend` | platform | `pulseaudio` or `rodio` on Linux. `rodio` is Spotifast's own output, through ALSA; librespot's separate rodio backend is no longer built in, and a backend this build lacks plays through Spotifast's own output |
+| `audio_backend` | platform | `pulseaudio` or `rodio` on Linux. `rodio` is SwiftSpot's own output, through ALSA; librespot's separate rodio backend is no longer built in, and a backend this build lacks plays through SwiftSpot's own output |
 | `audio_cache_mb` | `1024` | On-disk audio cache budget |
 | `theme` | `system` | Follow the system appearance by default; explicit `dark` and `light` choices remain available |
 | `custom_theme` | `null` | Selected JSON filename from the `themes` folder |
@@ -238,13 +238,13 @@ main fields are:
 | `accent_from_art` | `true` | Take the accent colour from album art |
 | `library_sort` | `{}` | Per-section Library order overrides, since 0.8.0: `library`, `recently_played`, `name`, `recently_added`, `local`, or `spotify`, where supported |
 | `sidebar_order` | `[]` | Saved local playlist arrangement, including an unpinned Liked Songs, retained when another sort is selected |
-| `pinned_contexts` | `[]` | Local Library pin order; Liked Songs uses `spotifast:liked-songs`, a local key never sent to Spotify |
+| `pinned_contexts` | `[]` | Local Library pin order; Liked Songs uses `swiftspot:liked-songs`, a local key never sent to Spotify |
 | `liked_songs_pinned` | `true` | Keep Liked Songs in the pin block; older settings place it first until moved |
 | `sidebar_compact` | `false` | Names only in the library sidebar, no covers |
 | `sidebar_grid` | `false` | Library entries as responsive cover cards instead of rows |
 | `tracklist_compact` | `false` | One-line track rows without covers |
 | `middle_click_autoscroll` | `false` | Linux only: middle-click a list to autoscroll it. Windows always autoscrolls and macOS never does |
-| `custom_titlebar` | `false` | Windows only, since 0.10.0: draw Spotifast's own title bar and window buttons instead of the standard Windows ones |
+| `custom_titlebar` | `false` | Windows only, since 0.10.0: draw SwiftSpot's own title bar and window buttons instead of the standard Windows ones |
 | `eq_on` | `false` | The equalizer shapes local playback |
 | `eq_preamp_db` | `0` | The preamp, in decibels, -12 to 12 |
 | `eq_bands_db` | ten zeros | The bands from 60 Hz to 16 kHz, in decibels, -12 to 12 |
@@ -264,7 +264,7 @@ main fields are:
 ## Command line
 
 ```
-spotifast [OPTIONS] [LINK]
+swiftspot [OPTIONS] [LINK]
 
   LINK                  A Spotify link to open: spotify:track:…, or an
                         open.spotify.com address
@@ -272,12 +272,12 @@ spotifast [OPTIONS] [LINK]
   -v, --verbose         More logs from librespot and the API client
 ```
 
-A link goes to the running Spotifast when there is one, which then opens
+A link goes to the running SwiftSpot when there is one, which then opens
 the page and brings its window forward; otherwise the app starts on it. The
 desktop's handler for `spotify:` links runs exactly this.
 
-Attach `spotifast.log` from the state directory to bug reports. It contains
-the last run's output, including extra lines from `spotifast -v`. After a
+Attach `swiftspot.log` from the state directory to bug reports. It contains
+the last run's output, including extra lines from `swiftspot -v`. After a
 crash, attach `panic.log` too.
 
 ## Demo mode
@@ -331,7 +331,7 @@ directory; the ordinary demo does not scan your real themes folder.
 ## Home shelves
 
 Since 0.8.0, you can hide **Made for you** and **Recommended for you**
-from Home independently. Quit Spotifast before editing `settings.json`, then
+from Home independently. Quit SwiftSpot before editing `settings.json`, then
 restart it. Add this field to hide both:
 
 ```json
@@ -348,16 +348,16 @@ refresh in the background.
 
 ## Custom themes
 
-Since 0.11.0, Spotifast puts eight palettes in the `themes` folder beside
+Since 0.11.0, SwiftSpot puts eight palettes in the `themes` folder beside
 `settings.json` the first time it starts: Catppuccin, Catppuccin Latte,
 Nord, Ristretto, Rose Pine, Rose Pine Dawn, Rose Pine Moon and Tokyo
 Night. They are ordinary palette files: read them to see how a theme is
-written, change them, or delete the ones you do not want. Spotifast never
+written, change them, or delete the ones you do not want. SwiftSpot never
 rewrites them, and a deleted one stays deleted; `.installed-palettes` in
 the folder records which it has already put there.
 
 To make your own, add JSON files to the `themes` folder.
-Run `spotifast reload-themes` if the app is already open, then select it
+Run `swiftspot reload-themes` if the app is already open, then select it
 under **Settings → Appearance → Theme**, where it is listed by its filename
 without `.json`.
 The default is **Follow system**. It uses your desktop’s light/dark appearance,
@@ -374,8 +374,8 @@ Themes change colors and keep the app's existing fonts.
 needed and opens it in your file
 manager.
 After adding or editing a JSON file on macOS or Windows, run
-`spotifast reload-themes` to refresh the list and the selected palette without
-restarting playback. Since 0.10.2, Spotifast on Linux notices changes to the
+`swiftspot reload-themes` to refresh the list and the selected palette without
+restarting playback. Since 0.10.2, SwiftSpot on Linux notices changes to the
 themes folder by itself.
 Choosing a built-in theme clears the custom selection.
 Since 0.11.0, whenever the colours change (a theme picked here, Omarchy
@@ -403,7 +403,7 @@ Supported colors are `window`, `panel`, `surface`, `surface_hover`,
 `accent_hover`, `on_accent`, `danger`, `warning`, `overlay`, and `shadow`.
 Values must be `#RRGGBB` or `#RRGGBBAA`.
 
-Files are read in the background at launch and when `spotifast reload-themes`
+Files are read in the background at launch and when `swiftspot reload-themes`
 is called. The command updates the selected palette without interrupting
 playback, changing your selection or showing the window. It does not start a
 stopped app. Repeated requests are combined while a scan is running. On Linux,
@@ -413,7 +413,7 @@ subdirectories. Each file is limited to 64 KiB. Keep at most 128 JSON files and
 512 total entries in the themes folder; the saved selection is still checked
 when a folder exceeds these limits.
 
-Invalid files are skipped with a warning in the log. Spotifast remembers the
+Invalid files are skipped with a warning in the log. SwiftSpot remembers the
 last accepted custom palette in `settings.json`. If the selected file is
 removed or becomes invalid, that appearance stays in place, including after
 a restart, and the Theme row explains the problem. Other preferences are
@@ -438,7 +438,7 @@ and track later theme changes. An existing explicit Dark, Light or custom
 choice stays selected. Choose **Follow system** or **Omarchy** under
 **Settings → Appearance → Theme** to follow Omarchy instead.
 
-Since 0.10.2, portable archives and Cargo builds follow Omarchy too: Spotifast
+Since 0.10.2, portable archives and Cargo builds follow Omarchy too: SwiftSpot
 reads the palette Omarchy rendered for it, or renders the template itself from
 the current theme's colours, and picks up theme changes without the hook.
 
@@ -449,40 +449,40 @@ or hook. A package uninstall removes the shared integration assets; your user
 configuration remains, like the rest of your preferences.
 
 For a manual installation, the repository includes an
-[Omarchy template](https://github.com/crmne/spotifast/blob/main/contrib/omarchy/spotifast.json.tpl)
-and a [theme-change hook](https://github.com/crmne/spotifast/blob/main/contrib/omarchy/spotifast-theme).
+[Omarchy template](https://github.com/hanzpo/swiftspot/blob/main/contrib/omarchy/swiftspot.json.tpl)
+and a [theme-change hook](https://github.com/hanzpo/swiftspot/blob/main/contrib/omarchy/swiftspot-theme).
 Omarchy resolves its light/dark mode and colors through its
 [template system](https://omarchy.org/manual/making-your-own-theme/).
 The hook copies the result atomically into `themes/omarchy.json`, then asks a
-running Spotifast to reload it. It does not change your desktop theme or your
-Spotifast selection itself.
+running SwiftSpot to reload it. It does not change your desktop theme or your
+SwiftSpot selection itself.
 
 For portable or Cargo installations, install the two files from a checkout:
 
 ```sh
 mkdir -p ~/.config/omarchy/themed
-install -m 644 contrib/omarchy/spotifast.json.tpl ~/.config/omarchy/themed/
-omarchy hook install theme-set contrib/omarchy/spotifast-theme
+install -m 644 contrib/omarchy/swiftspot.json.tpl ~/.config/omarchy/themed/
+omarchy hook install theme-set contrib/omarchy/swiftspot-theme
 ```
 
 Apply a theme through Omarchy's theme picker, then select **Omarchy** in
-Spotifast's **Settings → Appearance → Theme** once. Later Omarchy changes update
+SwiftSpot's **Settings → Appearance → Theme** once. Later Omarchy changes update
 that palette while music keeps playing. Turn off album-art tinting if every
 page should keep the theme's fixed colors.
 
 The hook uses Omarchy's current theme at
-`~/.local/state/omarchy/current/theme` and Spotifast's existing
-`${XDG_CONFIG_HOME:-~/.config}/spotifast/themes` directory. The shipped hook
+`~/.local/state/omarchy/current/theme` and SwiftSpot's existing
+`${XDG_CONFIG_HOME:-~/.config}/swiftspot/themes` directory. The shipped hook
 is updated automatically if its contents have not been customized. A custom profile can set
-`SPOTIFAST_THEMES_DIR` in the installed hook; this example uses the native
-`spotifast` command, not a Flatpak launcher. Themes without `colors.toml` need
-their own `spotifast.json` file. Missing or invalid palettes leave the last
+`SWIFTSPOT_THEMES_DIR` in the installed hook; this example uses the native
+`swiftspot` command, not a Flatpak launcher. Themes without `colors.toml` need
+their own `swiftspot.json` file. Missing or invalid palettes leave the last
 accepted appearance in place.
 
-To stop following Omarchy, choose Dark, Light or another custom theme in Spotifast.
+To stop following Omarchy, choose Dark, Light or another custom theme in SwiftSpot.
 For a manual installation, remove only
-`~/.config/omarchy/hooks/theme-set.d/spotifast-theme` and
-`~/.config/omarchy/themed/spotifast.json.tpl`. Other hooks remain in place.
+`~/.config/omarchy/hooks/theme-set.d/swiftspot-theme` and
+`~/.config/omarchy/themed/swiftspot.json.tpl`. Other hooks remain in place.
 Packaged launches recreate missing integration files. To disable the hook
 while keeping the package installed, leave that hook file empty instead;
 existing user files are preserved. Selecting Dark or Light is sufficient to stop following Omarchy's colors.

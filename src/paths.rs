@@ -70,7 +70,7 @@ impl AppDirs {
 
     /// The log of the current run, replaced at every start.
     pub fn log_file(&self) -> PathBuf {
-        self.state.join("spotifast.log")
+        self.state.join("swiftspot.log")
     }
 
     /// Where a panic is recorded before the process dies of it.

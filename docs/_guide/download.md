@@ -4,60 +4,60 @@ description: Download the app for macOS, Windows, or Linux, with install instruc
 nav_order: 1
 ---
 
-{% assign v = site.spotifast_version %}
-{% assign base = "https://github.com/crmne/spotifast/releases/download/v" | append: v %}
+{% assign v = site.swiftspot_version %}
+{% assign base = "https://github.com/hanzpo/swiftspot/releases/download/v" | append: v %}
 
 The current version is **v{{ v }}**. You can use the
 [download checksums]({{ base }}/checksums.txt) to check that a file has not
 been damaged or changed. Older versions are on the
-[releases page](https://github.com/crmne/spotifast/releases).
+[releases page](https://github.com/hanzpo/swiftspot/releases).
 
 ## macOS
 
 One download for both Apple Silicon and Intel:
 
-- [Download for Mac]({{ base }}/spotifast-v{{ v }}-macos-universal.dmg)
+- [Download for Mac]({{ base }}/swiftspot-v{{ v }}-macos-universal.dmg)
 
-Open the downloaded file and drag **Spotifast** to **Applications**.
+Open the downloaded file and drag **SwiftSpot** to **Applications**.
 
 If you use [Homebrew](https://brew.sh), you can install it with:
 
 ```sh
-brew install --cask crmne/tap/spotifast
+brew install --cask crmne/tap/swiftspot
 ```
 
 ### First open on macOS
 
-Open **Spotifast** from Applications. If your Mac asks whether you want to
+Open **SwiftSpot** from Applications. If your Mac asks whether you want to
 open an app downloaded from the internet, choose **Open**.
 
 Starting with 0.8.0, the Mac download passes Apple's security checks. You do
 not need to change security settings or run commands in Terminal to open it.
 
-Quit the old app before opening Spotifast. Your saved settings and sign-ins
+Quit the old app before opening SwiftSpot. Your saved settings and sign-ins
 carry over. If an older version reports that its update helper exited before
 it was ready, install the DMG above manually once. The helper changes take
 effect for updates started from 0.9.1 onward.
 
 ## Windows
 
-Download and run the installer. It adds Spotifast to the Start menu and does
+Download and run the installer. It adds SwiftSpot to the Start menu and does
 not need an administrator password. Choose the first download for most PCs,
 or the ARM version if your PC uses an ARM processor:
 
-- [Windows installer (most PCs)]({{ base }}/spotifast-v{{ v }}-x86_64-pc-windows-msvc-setup.exe)
-- [Windows installer (ARM PCs)]({{ base }}/spotifast-v{{ v }}-aarch64-pc-windows-msvc-setup.exe)
+- [Windows installer (most PCs)]({{ base }}/swiftspot-v{{ v }}-x86_64-pc-windows-msvc-setup.exe)
+- [Windows installer (ARM PCs)]({{ base }}/swiftspot-v{{ v }}-aarch64-pc-windows-msvc-setup.exe)
 
-To run Spotifast without an installer, download a ZIP file, extract it, and
-open `spotifast.exe`.
+To run SwiftSpot without an installer, download a ZIP file, extract it, and
+open `swiftspot.exe`.
 
-- [Windows ZIP (most PCs)]({{ base }}/spotifast-v{{ v }}-x86_64-pc-windows-msvc.zip)
-- [Windows ZIP (ARM PCs)]({{ base }}/spotifast-v{{ v }}-aarch64-pc-windows-msvc.zip)
+- [Windows ZIP (most PCs)]({{ base }}/swiftspot-v{{ v }}-x86_64-pc-windows-msvc.zip)
+- [Windows ZIP (ARM PCs)]({{ base }}/swiftspot-v{{ v }}-aarch64-pc-windows-msvc.zip)
 
 Either way, SmartScreen may warn about an unknown publisher on first run;
 choose **More info**, then **Run anyway**.
 
-Spotifast needs OpenGL 2.0 or newer, which every current Windows graphics
+SwiftSpot needs OpenGL 2.0 or newer, which every current Windows graphics
 driver provides. In a virtual machine or remote session that only has the
 Microsoft Basic Display Adapter, it may not start; install the machine's
 graphics driver, or enable GPU acceleration for the virtual machine.
@@ -69,27 +69,27 @@ in Windows.
 
 ### Arch Linux
 
-Spotifast is in the AUR, Arch's community package collection. Installing it
+SwiftSpot is in the AUR, Arch's community package collection. Installing it
 also adds it to your app launcher:
 
 ```sh
-yay -S spotifast-bin      # the released build, ready made
-yay -S spotifast          # the release, built from source
-yay -S spotifast-git      # built from the latest commit
+yay -S swiftspot-bin      # the released build, ready made
+yay -S swiftspot          # the release, built from source
+yay -S swiftspot-git      # built from the latest commit
 ```
 
 ### Flatpak
 
-Download the [Spotifast Flatpak]({{ base }}/spotifast-v{{ v }}-x86_64.flatpak?flatpak-id=rocks.spotifast.Spotifast).
+Download the [SwiftSpot Flatpak]({{ base }}/swiftspot-v{{ v }}-x86_64.flatpak?flatpak-id=com.hanzpo.swiftspot).
 It requires Flatpak and the Freedesktop 24.08 runtime, a set of shared
 components used by Flatpak apps:
 
 ```sh
-flatpak install --user ~/Downloads/spotifast-v{{ v }}-x86_64.flatpak
-flatpak run rocks.spotifast.Spotifast
+flatpak install --user ~/Downloads/swiftspot-v{{ v }}-x86_64.flatpak
+flatpak run com.hanzpo.swiftspot
 ```
 
-The application ID is **`rocks.spotifast.Spotifast`**.
+The application ID is **`com.hanzpo.swiftspot`**.
 
 To update this Flatpak installation, download and install the new release.
 Flathub support is planned.
@@ -99,14 +99,14 @@ problems specific to those packages to their maintainers.
 
 ### AppImage
 
-- [AppImage (Intel and AMD, 64-bit)]({{ base }}/spotifast-{{ v }}-x86_64.AppImage)
-- [AppImage (ARM, 64-bit)]({{ base }}/spotifast-{{ v }}-aarch64.AppImage)
+- [AppImage (Intel and AMD, 64-bit)]({{ base }}/swiftspot-{{ v }}-x86_64.AppImage)
+- [AppImage (ARM, 64-bit)]({{ base }}/swiftspot-{{ v }}-aarch64.AppImage)
 
 One file, no installation: make it executable and run it.
 
 ```sh
-chmod +x ~/Downloads/spotifast-{{ v }}-x86_64.AppImage
-~/Downloads/spotifast-{{ v }}-x86_64.AppImage
+chmod +x ~/Downloads/swiftspot-{{ v }}-x86_64.AppImage
+~/Downloads/swiftspot-{{ v }}-x86_64.AppImage
 ```
 
 The AppImage bundles no libraries: like the DEB and RPM, it needs glibc 2.39
@@ -116,10 +116,10 @@ download the new file to update.
 
 ### Other distributions
 
-- [Linux archive (Intel and AMD, 64-bit)]({{ base }}/spotifast-v{{ v }}-x86_64-unknown-linux-gnu.tar.gz)
-- [Linux archive (ARM, 64-bit)]({{ base }}/spotifast-v{{ v }}-aarch64-unknown-linux-gnu.tar.gz)
+- [Linux archive (Intel and AMD, 64-bit)]({{ base }}/swiftspot-v{{ v }}-x86_64-unknown-linux-gnu.tar.gz)
+- [Linux archive (ARM, 64-bit)]({{ base }}/swiftspot-v{{ v }}-aarch64-unknown-linux-gnu.tar.gz)
 
-Unpack, put `spotifast` on your PATH, and copy the desktop entry and icon
+Unpack, put `swiftspot` on your PATH, and copy the desktop entry and icon
 from the bundled `packaging/` directory if you want it in your launcher and
 handling `spotify:` links.
 The binary needs ALSA, PulseAudio or PipeWire, and Wayland or X11.
@@ -128,28 +128,28 @@ Or build from source: see the [build instructions](/getting-started/#build-from-
 
 ## Nix
 
-Add the repository [flake](https://github.com/crmne/spotifast) to your
+Add the repository [flake](https://github.com/hanzpo/swiftspot) to your
 inputs:
 
 ```nix
-inputs.spotifast.url = "github:crmne/spotifast";
+inputs.swiftspot.url = "github:hanzpo/swiftspot";
 ```
 
 On NixOS, install the default package:
 
 ```nix
 environment.systemPackages = [
-  inputs.spotifast.packages."${pkgs.stdenv.hostPlatform.system}".default
+  inputs.swiftspot.packages."${pkgs.stdenv.hostPlatform.system}".default
 ];
 ```
 
 ### nix-darwin
 
-On macOS, use the same `spotifast` package to install Spotifast as a Mac app:
+On macOS, use the same `swiftspot` package to install SwiftSpot as a Mac app:
 
 ```nix
 environment.systemPackages = [
-  inputs.spotifast.packages."${pkgs.stdenv.hostPlatform.system}".spotifast
+  inputs.swiftspot.packages."${pkgs.stdenv.hostPlatform.system}".swiftspot
 ];
 environment.pathsToLink = [ "/Applications" ];
 ```
@@ -160,6 +160,6 @@ The bundle appears in `/Applications/Nix Apps`. With Home Manager,
 
 ```nix
 home.packages = [
-  inputs.spotifast.packages."${pkgs.stdenv.hostPlatform.system}".spotifast
+  inputs.swiftspot.packages."${pkgs.stdenv.hostPlatform.system}".swiftspot
 ];
 ```

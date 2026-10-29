@@ -1,7 +1,7 @@
 ---
 redirect_from: /using-fastpotify/
 title: Everyday Use
-description: Play music, arrange playlists, find lyrics, and make Spotifast your own.
+description: Play music, arrange playlists, find lyrics, and make SwiftSpot your own.
 nav_order: 3
 ---
 
@@ -76,7 +76,7 @@ is still loading, it selects the songs loaded so far.
 `Ctrl+C` (`Cmd+C`) copies the selected songs' `open.spotify.com` links, one
 per line, ready to paste into another playlist, a message, or Spotify's own
 apps. `Ctrl+V` (`Cmd+V`) in a playlist you can edit adds every song link on
-the clipboard to its end. Links copied from Spotifast add their rows at
+the clipboard to its end. Links copied from SwiftSpot add their rows at
 once; links from elsewhere appear as soon as Spotify names the songs. Songs
 already in the playlist ask before being added twice, and links that are
 not songs, such as albums, are skipped.
@@ -134,7 +134,7 @@ while it plays from a playlist you can edit.
 Since 0.8.0, choose **Refresh** in a playlist's **…** menu to reload
 its details and songs, including changes made in another Spotify client. The
 menu item reads **Refreshing…** and is disabled while loading. Current songs,
-filtering and sorting stay visible. Spotifast finishes saving your edits before
+filtering and sorting stay visible. SwiftSpot finishes saving your edits before
 loading changes from Spotify. If loading fails, your songs stay visible and
 you can choose **Retry**.
 
@@ -152,14 +152,14 @@ and fills the box without starting playback. To try it in a development build,
 set a launcher or keyboard shortcut to run:
 
 ```sh
-spotifast 'https://open.spotify.com/search/here%20comes%20the%20sun'
+swiftspot 'https://open.spotify.com/search/here%20comes%20the%20sun'
 ```
 
 This starts the app if needed or opens its existing window. When signed out,
 the latest search link waits for sign-in. Use `https://open.spotify.com/search`
 without a query to open an empty, focused search box.
 
-On Linux, `playerctl --player=spotifast open` accepts the same search link
+On Linux, `playerctl --player=swiftspot open` accepts the same search link
 when the app is running. Links to songs, albums, and playlists still start
 playback as before.
 
@@ -241,20 +241,20 @@ for its own text.
 
 ## Controlling it from the command line
 
-The `spotifast` command controls the copy already running, on every
+The `swiftspot` command controls the copy already running, on every
 platform. Each verb prints nothing on success:
 
 ```
-spotifast play-pause          spotifast volume 40
-spotifast play                spotifast volume-up [percent]
-spotifast pause               spotifast volume-down [percent]
-spotifast next                spotifast mute
-spotifast previous            spotifast shuffle [on|off]
-spotifast seek 15             spotifast repeat [off|context|track]
-spotifast seek -- -15         spotifast like
-spotifast seek-to 90          spotifast play-uri spotify:playlist:37i9…
-spotifast show                spotifast transfer <device-id>
-spotifast now-playing [--raw] spotifast devices [--raw]
+swiftspot play-pause          swiftspot volume 40
+swiftspot play                swiftspot volume-up [percent]
+swiftspot pause               swiftspot volume-down [percent]
+swiftspot next                swiftspot mute
+swiftspot previous            swiftspot shuffle [on|off]
+swiftspot seek 15             swiftspot repeat [off|context|track]
+swiftspot seek -- -15         swiftspot like
+swiftspot seek-to 90          swiftspot play-uri spotify:playlist:37i9…
+swiftspot show                swiftspot transfer <device-id>
+swiftspot now-playing [--raw] swiftspot devices [--raw]
 ```
 
 `shuffle` and `repeat` toggle when used without an argument. Pass a state to
@@ -269,28 +269,28 @@ loading. New fields are appended to keep older scripts working.
 marked with `*`. `--raw` prints JSON. The command refreshes the device list,
 so the first call after startup may be empty. Run it again if needed.
 
-A verb exits non-zero when Spotifast is not running.
+A verb exits non-zero when SwiftSpot is not running.
 
-`spotifast <link>` opens a Spotify link, a `spotify:` URI or an
+`swiftspot <link>` opens a Spotify link, a `spotify:` URI or an
 `open.spotify.com` address, in the running app, or starts the app on it.
-This is what the desktop runs when a link is clicked. On Linux, Spotifast is
-also an MPRIS player, so `playerctl --player=spotifast play-pause` and media
+This is what the desktop runs when a link is clicked. On Linux, SwiftSpot is
+also an MPRIS player, so `playerctl --player=swiftspot play-pause` and media
 keys work too.
 
 Launchers such as Raycast or Alfred, and the Stream Deck plugin, can use
-these commands. They reach Spotifast through a private channel only your user
+these commands. They reach SwiftSpot through a private channel only your user
 can open (on Windows, a loopback port that answers only requests carrying a
 random token). Use the command rather than the channel itself.
 
 ## Updates
 
-Spotifast does not check for or install updates itself. To update, replace
+SwiftSpot does not check for or install updates itself. To update, replace
 it with a newer build. Updates keep your settings and sign-ins.
 
 Package-managed installations update through their package manager,
 including Homebrew, Flatpak, apt, dnf, pacman, Nix, and Cargo. Other
 installations, the AppImage among them, use the [Download page](/download/).
-Portable archives identify themselves with `spotifast-portable.txt`.
+Portable archives identify themselves with `swiftspot-portable.txt`.
 
 ## Library order
 
@@ -303,10 +303,10 @@ dates come last.
 
 **Spotify custom order** follows your playlist order and folders from Spotify.
 Set up playback on this computer to load that order. Your playlists stay
-visible while it loads, and Spotifast remembers the last order for your account.
-Items you pin in Spotifast remain at the top, including items from a closed
+visible while it loads, and SwiftSpot remembers the last order for your account.
+Items you pin in SwiftSpot remain at the top, including items from a closed
 folder. Sorting or dragging Library items changes their order only in
-Spotifast; it does not rearrange your Spotify library.
+SwiftSpot; it does not rearrange your Spotify library.
 
 Drag playlists to choose **Local custom order**. New playlists appear below the
 pinned group. Selecting **Name**, **Recently played** or **Spotify custom order**
@@ -323,7 +323,7 @@ Liked Songs starts pinned at the top. Drag it between pins to choose its
 position, or below the pin block to unpin it and put it in **Local custom
 order**. Other pins can sit above it. Its right-click menu also offers **Unpin**
 and **Pin to top**; pinning adds it after your existing pins. The arrangement
-survives restarting Spotifast and switching sort choices.
+survives restarting SwiftSpot and switching sort choices.
 
 When unpinned, Liked Songs follows **Name** or **Recently played** like the other
 rows. In **Spotify custom order**, it appears after the playlists because it
@@ -337,14 +337,14 @@ bullet; each artist name remains a separate link.
 
 ## Windows taskbar controls
 
-Since 0.8.0, hovering Spotifast's taskbar button offers **Previous**,
+Since 0.8.0, hovering SwiftSpot's taskbar button offers **Previous**,
 **Play/Pause**, and **Next** beneath its window preview. They control the same
 playing device as the player bar, update immediately, and are disabled when
 there is no song or the device refuses controls. The icons follow the system
 appearance and display scaling.
 
 Since 0.8.0, clicking or double-clicking the Windows tray icon shows
-and raises Spotifast. Use **Show or hide Spotifast** in the tray menu to hide
+and raises SwiftSpot. Use **Show or hide SwiftSpot** in the tray menu to hide
 it again.
 
 Closing to the tray removes the window and its preview. Reopening the window
@@ -354,7 +354,7 @@ is closed.
 
 ## macOS Dock menu
 
-Right-click or Control-click Spotifast's Dock icon for **Play** (or **Pause**
+Right-click or Control-click SwiftSpot's Dock icon for **Play** (or **Pause**
 while music plays), **Next**, and **Previous**, above the standard Dock items.
 They control the same playing device as the player bar.
 
@@ -371,7 +371,7 @@ Hover to read the device name; click to open the device picker.
 
 ## MacBook notch widget
 
-On macOS machines equipped with a display notch, Spotifast displays an
+On macOS machines equipped with a display notch, SwiftSpot displays an
 interactive Now Playing floating island under the notch when the main
 window is minimized, in the background, or closed to the tray.
 
@@ -390,7 +390,7 @@ Settings under **Playback on this computer**.
 ## Recent
 
 The queue panel's second tab combines Spotify's history with tracks played
-through Spotifast, which Spotify does not record.
+through SwiftSpot, which Spotify does not record.
 
 Since 0.8.0, choosing any Recent row starts that song on its own,
 and the player bar shows the selection immediately while playback starts.
@@ -407,7 +407,7 @@ The local list is stored in `history.json` and is never uploaded. Settings →
 Storage shows its location and has a **Clear history** button.
 
 On Windows, the main window's minimize, maximize, and close buttons share the
-top bar with Spotifast's controls. Drag an empty part of that bar to move or
+top bar with SwiftSpot's controls. Drag an empty part of that bar to move or
 snap the window, and drag a window edge or corner to resize it.
 
 ## Radio

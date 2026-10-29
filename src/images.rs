@@ -1279,7 +1279,7 @@ mod tests {
         );
 
         let runtime = artwork_test_runtime();
-        let dir = std::env::temp_dir().join(format!("spotifast-art-webp-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("swiftspot-art-webp-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let loader = artwork_test_loader(&runtime, dir.clone());
         let ctx = egui::Context::default();

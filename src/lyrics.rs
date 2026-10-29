@@ -817,7 +817,7 @@ mod tests {
         ])
         .await;
         let root =
-            std::env::temp_dir().join(format!("spotifast-lyrics-miss-{}", std::process::id()));
+            std::env::temp_dir().join(format!("swiftspot-lyrics-miss-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let http = reqwest::Client::builder().no_proxy().build().unwrap();
         assert!(

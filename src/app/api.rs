@@ -520,7 +520,23 @@ impl App {
         match request.method.as_str() {
             "hello" => Ok(self.api_hello()),
             "auth.sign_in" => {
+                if let Some(client_id) = params.get("client_id") {
+                    let client_id = client_id.as_str().ok_or("expected a string")?.trim();
+                    self.settings.web_client_id =
+                        (!client_id.is_empty()).then(|| client_id.to_string());
+                }
                 self.actions.push(Action::SignIn);
+                ok()
+            }
+            "auth.use_client_id" => {
+                let client_id = param_str(params, "client_id")?.trim();
+                if !crate::auth::looks_like_client_id(client_id) {
+                    return Err(crate::backend::SignInProblem::MalformedClientId
+                        .message()
+                        .into());
+                }
+                self.settings.web_client_id = Some(client_id.to_string());
+                self.actions.push(Action::ConfigurePersonalWebApp);
                 ok()
             }
             "auth.cancel" => {
@@ -1246,7 +1262,7 @@ impl App {
         self.ensure_loaded(page);
     }
 
-    fn api_hello(&self) -> Value {
+    pub(super) fn api_hello(&self) -> Value {
         json!({
             "app": "SwiftSpot",
             "version": env!("CARGO_PKG_VERSION"),
@@ -1258,12 +1274,28 @@ impl App {
                 crate::backend::AuthStatus::Connecting => "connecting",
                 crate::backend::AuthStatus::Connected { .. } => "connected",
                 crate::backend::AuthStatus::Failed(_) => "failed",
+                crate::backend::AuthStatus::Refused(_) => "refused",
             },
             "auth_error": match &self.auth {
                 crate::backend::AuthStatus::Failed(error) => Some(error.clone()),
+                crate::backend::AuthStatus::Refused(problem) => Some(problem.message().to_string()),
+                _ => None,
+            },
+            "sign_in_problem": match &self.auth {
+                crate::backend::AuthStatus::Refused(problem) => Some(match problem {
+                    crate::backend::SignInProblem::MalformedClientId => "malformed_client_id",
+                    crate::backend::SignInProblem::UnknownClient => "unknown_client",
+                    crate::backend::SignInProblem::AccountNotAllowed => "account_not_allowed",
+                    crate::backend::SignInProblem::SharedRetired => "shared_retired",
+                    crate::backend::SignInProblem::Expired => "expired",
+                }),
                 _ => None,
             },
             "sign_in_url": self.sign_in_url,
+            "client_id": self.settings.web_client_id,
+            "web_app": self.web_app,
+            "shared_grant": self.shared_grant,
+            "redirect_uri": crate::auth::personal_redirect_uri(),
             "user": self.user.as_ref().map(|user| json!({
                 "id": user.id,
                 "name": user.name(),

@@ -525,6 +525,9 @@ pub struct App {
     pub sign_in_url: Option<String>,
     /// The verified personal Web API application, when acceleration is ready.
     pub web_app: Option<String>,
+    /// A shared grant from before 0.14.2 is signed in: Spotify can stop
+    /// accepting it at any time, so Settings offers the personal app.
+    pub shared_grant: bool,
     pending_remote_position: Option<(u32, Instant)>,
     pending_remote_volume: Option<PendingRemoteVolume>,
     remote_volume_request: u64,
@@ -971,6 +974,7 @@ impl App {
             frame_now: None,
             sign_in_url: None,
             web_app: None,
+            shared_grant: false,
             pending_remote_position: None,
             pending_remote_volume: None,
             remote_volume_request: 0,
@@ -2152,6 +2156,7 @@ impl App {
                     Err(error) => log::debug!("album type unavailable for {uri}: {error}"),
                 },
                 Event::WebApp { client_id } => self.web_app = client_id,
+                Event::SharedGrant(signed_in) => self.shared_grant = signed_in,
             }
         }
     }
@@ -2180,6 +2185,7 @@ impl App {
                 self.uploaded_covers.clear();
                 self.sign_in_url = None;
                 self.web_app = None;
+                self.shared_grant = false;
                 self.user = None;
                 self.premium_notice_shown = false;
                 self.local = LocalState::default();
@@ -2197,6 +2203,8 @@ impl App {
                 self.sign_in_url = None;
                 self.toast_error(message.clone());
             }
+            // The sign-in screen explains it; a toast would say it twice.
+            AuthStatus::Refused(_) => self.sign_in_url = None,
             _ => {}
         }
         self.auth = status;
@@ -3101,7 +3109,11 @@ impl App {
         self.pending_proxy_preferences
             .insert(request, self.settings.proxy_preferences());
         self.backend.send(if sign_in {
-            Command::SignIn { request, config }
+            Command::SignIn {
+                request,
+                config,
+                client_id: self.settings.web_client_id.clone(),
+            }
         } else {
             Command::ApplyProxy { request, config }
         });
@@ -4920,7 +4932,16 @@ impl App {
                     }
                 }
                 Err(error) => {
-                    if matches!(error, crate::api::ApiError::SignInExpired { .. }) {
+                    if matches!(
+                        error,
+                        crate::api::ApiError::SignInExpired {
+                            api_source: crate::api::ApiSource::Shared
+                        }
+                    ) && self.web_app.is_some()
+                    {
+                        // Spotify refused the shared grant; the personal app
+                        // carries the session on its own.
+                    } else if matches!(error, crate::api::ApiError::SignInExpired { .. }) {
                         self.auth = AuthStatus::Failed(
                             gettext(
                                 self.locale,
@@ -9353,7 +9374,12 @@ impl App {
                 }
             }
             Action::Reload(page) => self.reload(page),
-            Action::SignIn => self.request_proxy(true),
+            Action::SignIn => {
+                // The Client ID typed on the sign-in screen is kept for the
+                // next sign-in, as Settings keeps it.
+                self.save_settings();
+                self.request_proxy(true);
+            }
             Action::ApplyProxy => self.request_proxy(false),
             Action::ProxyEdited => self.proxy_form_edited = true,
             Action::CancelSignIn => {
@@ -16239,6 +16265,7 @@ mod tests {
         app.auth = AuthStatus::Connected {
             username: "listener".into(),
         };
+        app.shared_grant = true;
         app.user = Some(User {
             product: Some("premium".into()),
             ..User::default()
@@ -20446,6 +20473,58 @@ mod tests {
             device_id: "mac".into(),
         };
         assert_eq!(app.api_devices()["local_playback"], "ready");
+    }
+
+    #[test]
+    fn signing_in_takes_the_client_id_typed_and_explains_refusals() {
+        let mut app = headless_app();
+        let call = |app: &mut App, method: &str, params: serde_json::Value| {
+            app.actions.clear();
+            app.answer(&crate::server::Request {
+                client: 0,
+                id: serde_json::json!(1),
+                method: method.into(),
+                params,
+            })
+        };
+        let id = "0123456789abcdef0123456789abcdef";
+        call(
+            &mut app,
+            "auth.sign_in",
+            serde_json::json!({"client_id": format!(" {id} ")}),
+        )
+        .unwrap();
+        assert_eq!(app.settings.web_client_id.as_deref(), Some(id));
+        assert!(matches!(app.actions.as_slice(), [Action::SignIn]));
+        assert!(
+            call(
+                &mut app,
+                "auth.use_client_id",
+                serde_json::json!({"client_id": "dashboard"})
+            )
+            .is_err()
+        );
+        assert!(app.actions.is_empty());
+        let other = "fedcba9876543210fedcba9876543210";
+        call(
+            &mut app,
+            "auth.use_client_id",
+            serde_json::json!({"client_id": other}),
+        )
+        .unwrap();
+        assert_eq!(app.settings.web_client_id.as_deref(), Some(other));
+        assert!(matches!(
+            app.actions.as_slice(),
+            [Action::ConfigurePersonalWebApp]
+        ));
+
+        app.auth = AuthStatus::Refused(crate::backend::SignInProblem::UnknownClient);
+        let hello = app.api_hello();
+        assert_eq!(hello["auth"], "refused");
+        assert_eq!(hello["sign_in_problem"], "unknown_client");
+        assert_eq!(hello["client_id"], other);
+        assert_eq!(hello["redirect_uri"], "http://127.0.0.1:8989/login");
+        assert!(hello["auth_error"].as_str().unwrap().contains("Client ID"));
     }
 
     #[test]

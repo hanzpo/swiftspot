@@ -85,31 +85,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, connecting: bool) {
                                 theme::text(ui, gettext(locale, "Connecting to Spotify…"), theme::medium(14.0), palette.text);
                             });
                         }
-                        AuthStatus::Failed(message) => {
-                            let message = message.clone();
+                        AuthStatus::Failed(_) | AuthStatus::Refused(_) => {
+                            let message = match &app.auth {
+                                AuthStatus::Refused(problem) => problem.message().to_string(),
+                                AuthStatus::Failed(message) => message.clone(),
+                                _ => String::new(),
+                            };
                             ui.add(
                                 egui::Label::new(egui::RichText::new(message).font(theme::regular(13.0)).color(palette.danger)).wrap(),
                             );
                             ui.add_space(12.0);
                             if big_button(ui, app, &gettext(locale, "Try again")) {
                                 app.actions.push(Action::SignIn);
-                            }
-                            if app.settings.web_client_id.is_some() {
-                                ui.add_space(10.0);
-                                if theme::pill_button(
-                                    ui,
-                                    &palette,
-                                    &gettext(locale, "Use the shared Spotify app instead"),
-                                    false,
-                                )
-                                .clicked()
-                                {
-                                    // A wrong personal Client ID trapped the
-                                    // user here with Settings out of reach.
-                                    app.settings.web_client_id = None;
-                                    app.mark_settings_dirty();
-                                    app.actions.push(Action::ConfigurePersonalWebApp);
-                                }
                             }
                         }
                         _ => {
@@ -125,25 +112,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, connecting: bool) {
                                 )
                                 .wrap(),
                             );
-                            if app.settings.web_client_id.is_some() {
-                                // A wrong personal Client ID dead-ends in the
-                                // browser on Spotify's side, so the app never
-                                // hears it failed; the way out has to stand
-                                // here, not only on the failure screen.
-                                ui.add_space(10.0);
-                                if theme::pill_button(
-                                    ui,
-                                    &palette,
-                                    &gettext(locale, "Use the shared Spotify app instead"),
-                                    false,
-                                )
-                                .clicked()
-                                {
-                                    app.settings.web_client_id = None;
-                                    app.mark_settings_dirty();
-                                    app.actions.push(Action::ConfigurePersonalWebApp);
-                                }
-                            }
                         }
                     }
                     let mut proxy_open = ui.data(|data| data.get_temp::<bool>(proxy_id)).unwrap_or(false);

@@ -4949,7 +4949,10 @@ async fn spotify_lyrics(
     if let Some(cached) = crate::lyrics::cached(&path) {
         return cached;
     }
-    match engine?.lyrics_json(uri).await {
+    let Some(engine) = engine else {
+        return crate::lyrics::previously_found(&path);
+    };
+    match engine.lyrics_json(uri).await {
         Ok(json) => {
             let found = json.as_ref().and_then(crate::lyrics::from_spotify);
             crate::lyrics::store(&path, &found);
@@ -4957,7 +4960,7 @@ async fn spotify_lyrics(
         }
         Err(error) => {
             log::debug!("spotify lyrics unavailable: {error:#}");
-            None
+            crate::lyrics::previously_found(&path)
         }
     }
 }

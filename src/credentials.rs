@@ -81,11 +81,10 @@ impl ProxyPassword {
 impl Grant {
     fn valid_for(&self, slot: Slot) -> bool {
         match (slot, self) {
-            (Slot::Shared, Self::Web(token)) => {
-                token.client_id == crate::auth::DEFAULT_WEB_CLIENT_ID
-                    && !token.refresh_token.is_empty()
-            }
-            (Slot::Personal, Self::Web(token)) => {
+            // The slot says which session a grant belongs to. A shared grant
+            // carries the client ID it was issued to and refreshes with it,
+            // so it keeps working without Spotifast knowing that ID.
+            (Slot::Shared | Slot::Personal, Self::Web(token)) => {
                 !token.client_id.is_empty() && !token.refresh_token.is_empty()
             }
             (Slot::Playback, Self::Playback(credentials)) => {
@@ -382,16 +381,26 @@ impl Store {
         };
         let mut paths = vec![path.clone(), path.with_extension("json.tmp")];
         if slot != Slot::Playback {
-            // The old combined path belongs to whichever client identity it contains.
+            // The old combined path belongs to the personal app when it holds
+            // the Client ID set up in Settings, and to shared access otherwise.
             let legacy = dirs.legacy_web_token_file();
             if StoredToken::load(&legacy).is_some_and(|token| {
-                (slot == Slot::Shared) == (token.client_id == crate::auth::DEFAULT_WEB_CLIENT_ID)
+                (slot == Slot::Personal) == self.is_personal_client(&token.client_id)
             }) {
                 paths.push(legacy.clone());
                 paths.push(legacy.with_extension("json.tmp"));
             }
         }
         paths
+    }
+
+    /// Whether `client_id` is the personal app's, as saved in settings.
+    fn is_personal_client(&self, client_id: &str) -> bool {
+        std::fs::read_to_string(self.inner.dirs.settings_file())
+            .ok()
+            .and_then(|text| serde_json::from_str::<crate::settings::Settings>(&text).ok())
+            .and_then(|settings| settings.web_client_id)
+            .is_some_and(|personal| personal.trim() == client_id)
     }
 
     fn remove_legacy(&self, slot: Slot) -> Result<(), Error> {
@@ -727,6 +736,10 @@ mod tests {
         }
     }
 
+    /// Any client ID will do for shared access: the slot, not the ID,
+    /// says which session a grant belongs to.
+    const SHARED_CLIENT: &str = "dummy-shared-client";
+
     fn web(client: &str) -> Grant {
         Grant::Web(StoredToken {
             client_id: client.into(),
@@ -743,7 +756,7 @@ mod tests {
     #[tokio::test]
     async fn a_recorded_credential_profile_keeps_grants_and_revocation_markers() {
         let fixture = Fixture::new();
-        let grant = web(crate::auth::DEFAULT_WEB_CLIENT_ID);
+        let grant = web(SHARED_CLIENT);
         fixture
             .store
             .lease(Slot::Shared)
@@ -876,7 +889,7 @@ mod tests {
             .unwrap();
         f.store
             .lease(Slot::Shared)
-            .save(web(crate::auth::DEFAULT_WEB_CLIENT_ID))
+            .save(web(SHARED_CLIENT))
             .await
             .unwrap();
         f.store.revoke_spotify().unwrap();
@@ -935,7 +948,7 @@ mod tests {
         .unwrap();
         let store = Store::new(f.dirs.clone());
         let grants = [
-            web(crate::auth::DEFAULT_WEB_CLIENT_ID),
+            web(SHARED_CLIENT),
             web("dummy-personal-client"),
             playback(),
             proxy_password(),
@@ -989,7 +1002,7 @@ mod tests {
     fn a_failed_revocation_marker_does_not_prevent_legacy_cleanup() {
         let f = Fixture::new();
         let path = f.dirs.shared_web_token_file();
-        write_legacy(&path, &web(crate::auth::DEFAULT_WEB_CLIENT_ID));
+        write_legacy(&path, &web(SHARED_CLIENT));
         std::fs::write(f.dirs.state.join("credential-storage"), b"not a directory").unwrap();
         assert_eq!(f.store.revoke(Slot::Shared), Err(Error::Filesystem));
         assert!(!path.exists());
@@ -998,11 +1011,7 @@ mod tests {
     #[tokio::test]
     async fn all_grants_migrate_and_survive_restart_without_plaintext_files() {
         let f = Fixture::new();
-        let grants = [
-            web(crate::auth::DEFAULT_WEB_CLIENT_ID),
-            web("dummy-personal-client"),
-            playback(),
-        ];
+        let grants = [web(SHARED_CLIENT), web("dummy-personal-client"), playback()];
         let paths = [
             f.dirs.shared_web_token_file(),
             f.dirs.personal_web_token_file(),
@@ -1031,21 +1040,48 @@ mod tests {
     #[tokio::test]
     async fn combined_legacy_path_migrates_to_its_client_identity() {
         for (slot, client) in [
-            (Slot::Shared, crate::auth::DEFAULT_WEB_CLIENT_ID),
+            (Slot::Shared, SHARED_CLIENT),
             (Slot::Personal, "dummy-personal-client"),
         ] {
             let f = Fixture::new();
+            std::fs::write(
+                f.dirs.settings_file(),
+                r#"{"web_client_id":"dummy-personal-client"}"#,
+            )
+            .unwrap();
             let grant = web(client);
             write_legacy(&f.dirs.legacy_web_token_file(), &grant);
+            let other = if slot == Slot::Shared {
+                Slot::Personal
+            } else {
+                Slot::Shared
+            };
+            assert!(f.store.lease(other).load().await.unwrap().grant.is_none());
             assert!(f.store.lease(slot).load().await.unwrap().grant == Some(grant));
             assert!(!f.dirs.legacy_web_token_file().exists());
         }
     }
 
+    /// Spotifast no longer knows the client ID shared access was issued
+    /// to. A grant saved for it still loads, whatever that ID, and
+    /// refreshes with the ID it carries.
+    #[tokio::test]
+    async fn a_shared_grant_loads_whatever_client_it_was_issued_to() {
+        let f = Fixture::new();
+        let grant = web("d0000000000000000000000000000001");
+        f.store
+            .lease(Slot::Shared)
+            .save(grant.clone())
+            .await
+            .unwrap();
+        let restarted = Store::with_backend(f.dirs.clone(), Box::new(Backend(f.fake.clone())));
+        assert!(restarted.lease(Slot::Shared).load().await.unwrap().grant == Some(grant));
+    }
+
     #[tokio::test]
     async fn failed_migration_keeps_original_and_reports_warning_then_can_retry() {
         let f = Fixture::new();
-        let grant = web(crate::auth::DEFAULT_WEB_CLIENT_ID);
+        let grant = web(SHARED_CLIENT);
         let path = f.dirs.shared_web_token_file();
         write_legacy(&path, &grant);
         f.fake.lock().unwrap().write_error = Some(Error::Locked);
@@ -1064,10 +1100,7 @@ mod tests {
     #[tokio::test]
     async fn migration_requires_read_back_before_removing_original() {
         let f = Fixture::new();
-        write_legacy(
-            &f.dirs.shared_web_token_file(),
-            &web(crate::auth::DEFAULT_WEB_CLIENT_ID),
-        );
+        write_legacy(&f.dirs.shared_web_token_file(), &web(SHARED_CLIENT));
         f.fake.lock().unwrap().discard_write = true;
         let loaded = f.store.lease(Slot::Shared).load().await.unwrap();
         assert_eq!(loaded.warning, Some(Error::Verification));
@@ -1087,11 +1120,7 @@ mod tests {
         }
         let lease = f.store.lease(Slot::Shared);
         let pending_lease = lease.clone();
-        let pending = tokio::spawn(async move {
-            pending_lease
-                .save(web(crate::auth::DEFAULT_WEB_CLIENT_ID))
-                .await
-        });
+        let pending = tokio::spawn(async move { pending_lease.save(web(SHARED_CLIENT)).await });
         entered_rx.await.unwrap();
         f.store.revoke_spotify().unwrap();
         assert!(!lease.current());
@@ -1114,7 +1143,7 @@ mod tests {
         let f = Fixture::new();
         f.store
             .lease(Slot::Shared)
-            .save(web(crate::auth::DEFAULT_WEB_CLIENT_ID))
+            .save(web(SHARED_CLIENT))
             .await
             .unwrap();
         f.fake.lock().unwrap().delete_error = Some(Error::Locked);
@@ -1140,7 +1169,7 @@ mod tests {
     #[tokio::test]
     async fn revoked_or_protected_slots_never_revive_stale_legacy_files() {
         let f = Fixture::new();
-        let grant = web(crate::auth::DEFAULT_WEB_CLIENT_ID);
+        let grant = web(SHARED_CLIENT);
         f.store
             .lease(Slot::Shared)
             .save(grant.clone())
@@ -1199,7 +1228,7 @@ mod tests {
         let isolated = Store::with_backend(other.dirs.clone(), Box::new(Backend(f.fake.clone())));
         f.store
             .lease(Slot::Shared)
-            .save(web(crate::auth::DEFAULT_WEB_CLIENT_ID))
+            .save(web(SHARED_CLIENT))
             .await
             .unwrap();
         assert!(
@@ -1216,7 +1245,7 @@ mod tests {
             serde_json::to_vec(&Record {
                 version: 2,
                 slot: Slot::Shared,
-                grant: web(crate::auth::DEFAULT_WEB_CLIENT_ID),
+                grant: web(SHARED_CLIENT),
             })
             .unwrap(),
             serde_json::to_vec(&Record {

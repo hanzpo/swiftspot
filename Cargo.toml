@@ -240,27 +240,22 @@ winit = { git = "https://github.com/crmne/winit", rev = "ed7caa9023f10b397f5b6ec
 # hyper-proxy2's unreleased rustls 0.23 update plus our upstream provider
 # compatibility fix. Drop this fork when a release includes both changes.
 hyper-proxy2 = { git = "https://github.com/crmne/hyper-proxy2", rev = "efca4811371ddae81c06be168de54194938d70b1" }
-# librespot 0.8.0 plus the small patches SwiftSpot needs: queue controls,
-# normalisation-factor reporting, and a distinct event
-# when Spotify refuses an audio key, bounded socket setup with DNS address
-# fallback, an in-memory credential cache for platform storage, full
-# playback-state recovery after a session disconnect, the desktop platform
-# signature for Windows on ARM, a volume set while the device is inactive,
-# audio key requests asked again when they time out, no decoding of a
-# file still encrypted, the dealer connection through the configured proxy,
-# tokens and credentials kept out of Debug output, and a bounded handshake
-# packet size (hanzpo/librespot's swiftspot branch, on top of
-# crmne/librespot's pinned 0.8 branch; the key retries answer
-# librespot-org/librespot#1649).
-# Recovery is proposed upstream in librespot-org/librespot#1765 and the
-# volume in librespot-org/librespot#1770; the ARM signature answers
-# librespot-org/librespot#1737.
-# Every librespot crate comes from the
-# fork so one copy exists. Drop patches as upstream takes them.
-librespot-audio = { git = "https://github.com/hanzpo/librespot", rev = "08cc7ca025f78aed5cda2975f6f93c0b0d8ff59b" }
-librespot-connect = { git = "https://github.com/hanzpo/librespot", rev = "08cc7ca025f78aed5cda2975f6f93c0b0d8ff59b" }
-librespot-core = { git = "https://github.com/hanzpo/librespot", rev = "08cc7ca025f78aed5cda2975f6f93c0b0d8ff59b" }
-librespot-metadata = { git = "https://github.com/hanzpo/librespot", rev = "08cc7ca025f78aed5cda2975f6f93c0b0d8ff59b" }
-librespot-oauth = { git = "https://github.com/hanzpo/librespot", rev = "08cc7ca025f78aed5cda2975f6f93c0b0d8ff59b" }
-librespot-playback = { git = "https://github.com/hanzpo/librespot", rev = "08cc7ca025f78aed5cda2975f6f93c0b0d8ff59b" }
-librespot-protocol = { git = "https://github.com/hanzpo/librespot", rev = "08cc7ca025f78aed5cda2975f6f93c0b0d8ff59b" }
+# librespot's dev branch with crmne/librespot's spotifast-dev patches, which
+# are open upstream (librespot-org/librespot#1765, #1770, #1798 to #1803,
+# #1806, #1807, #1665, #1704, #1809, #1829 to #1832 and #1844 to #1846):
+# queue controls, normalisation reports, refused audio keys as their own
+# event, bounded socket setup, in-memory credentials, playback recovery
+# after a disconnect, a bounded handshake, the start of upcoming songs
+# prefetched so a skip plays at once, and audio keys asked for one at a
+# time with a back-off after a refusal. hanzpo/librespot's swiftspot-dev
+# branch adds one patch: a key that times out is asked for again, and a
+# file still encrypted is never decoded (librespot-org/librespot#1649).
+# Every librespot crate comes from the fork so one copy exists. Drop
+# patches as upstream takes them.
+librespot-audio = { git = "https://github.com/hanzpo/librespot", rev = "0f04ee23f0d626e0760cc5246a7f3d4579b99057" }
+librespot-connect = { git = "https://github.com/hanzpo/librespot", rev = "0f04ee23f0d626e0760cc5246a7f3d4579b99057" }
+librespot-core = { git = "https://github.com/hanzpo/librespot", rev = "0f04ee23f0d626e0760cc5246a7f3d4579b99057" }
+librespot-metadata = { git = "https://github.com/hanzpo/librespot", rev = "0f04ee23f0d626e0760cc5246a7f3d4579b99057" }
+librespot-oauth = { git = "https://github.com/hanzpo/librespot", rev = "0f04ee23f0d626e0760cc5246a7f3d4579b99057" }
+librespot-playback = { git = "https://github.com/hanzpo/librespot", rev = "0f04ee23f0d626e0760cc5246a7f3d4579b99057" }
+librespot-protocol = { git = "https://github.com/hanzpo/librespot", rev = "0f04ee23f0d626e0760cc5246a7f3d4579b99057" }

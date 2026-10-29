@@ -198,10 +198,12 @@ fn page(items: Vec<PlaylistItem>, total: u32, offset: u32, limit: u32) -> Page<P
 
 /// The songs of Spotify's radio `station`, in Spotify's order, with their
 /// details from one batched request. Spotify mixes a station afresh each
-/// time it is resolved, so the list returned here is the one to play.
-pub async fn station(session: &Session, station: &str) -> anyhow::Result<Vec<Track>> {
+/// time it is resolved, so the list returned here is the one to play. A
+/// song radio starts with its `seed`, which Spotify's mix may leave out or
+/// place later; a seed Spotify cannot describe is left out.
+pub async fn station(session: &Session, station: &str, seed: &str) -> anyhow::Result<Vec<Track>> {
     let context = session.spclient().get_context(station).await?;
-    let uris = station_songs(&context);
+    let uris = seed_first(station_songs(&context), seed);
     anyhow::ensure!(!uris.is_empty(), "Spotify has no songs for this radio");
     let found = metadata(session, uris.iter())
         .await
@@ -299,6 +301,18 @@ pub async fn related_artists(
 }
 
 /// Each song of a resolved station once, named by URI or by raw id.
+/// `songs` with a song `seed` moved, or added, to the front once. Other
+/// seeds keep Spotify's order.
+fn seed_first(mut songs: Vec<SpotifyUri>, seed: &str) -> Vec<SpotifyUri> {
+    let Ok(seed @ SpotifyUri::Track { .. }) = SpotifyUri::from_uri(seed) else {
+        return songs;
+    };
+    let text = seed.to_uri();
+    songs.retain(|song| song.to_uri() != text);
+    songs.insert(0, seed);
+    songs
+}
+
 fn station_songs(context: &librespot_protocol::context::Context) -> Vec<SpotifyUri> {
     let mut seen = BTreeSet::new();
     context
@@ -1701,6 +1715,39 @@ mod tests {
                 "spotify:track:0000000000000000000000",
                 "spotify:track:4uLU6hMCjMI75M1A2tKUQC",
             ]
+        );
+    }
+
+    #[test]
+    fn a_song_radio_starts_with_its_seed_once() {
+        let uri = |text: &str| SpotifyUri::from_uri(text).unwrap();
+        let mix = || {
+            vec![
+                uri("spotify:track:4uLU6hMCjMI75M1A2tKUQC"),
+                uri("spotify:track:3JA9Jsuxr4xgHXEawAdCp4"),
+            ]
+        };
+        let texts = |songs: Vec<SpotifyUri>| -> Vec<String> {
+            songs.iter().map(|song| song.to_uri()).collect()
+        };
+        assert_eq!(
+            texts(seed_first(mix(), "spotify:track:3JA9Jsuxr4xgHXEawAdCp4")),
+            [
+                "spotify:track:3JA9Jsuxr4xgHXEawAdCp4",
+                "spotify:track:4uLU6hMCjMI75M1A2tKUQC",
+            ]
+        );
+        assert_eq!(
+            texts(seed_first(mix(), "spotify:track:0000000000000000000000")),
+            [
+                "spotify:track:0000000000000000000000",
+                "spotify:track:4uLU6hMCjMI75M1A2tKUQC",
+                "spotify:track:3JA9Jsuxr4xgHXEawAdCp4",
+            ]
+        );
+        assert_eq!(
+            texts(seed_first(mix(), "spotify:artist:3JA9Jsuxr4xgHXEawAdCp4")),
+            texts(mix())
         );
     }
 }

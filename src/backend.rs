@@ -3188,7 +3188,7 @@ impl Worker {
                     Some(station) => {
                         match tokio::time::timeout(
                             RADIO_TIMEOUT,
-                            session_reads::station(engine.session(), &station),
+                            session_reads::station(engine.session(), &station, &seed),
                         )
                         .await
                         {

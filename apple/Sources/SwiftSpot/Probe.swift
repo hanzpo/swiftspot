@@ -81,6 +81,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.setFrameOrigin(.zero)
         window.orderFrontRegardless()
         self.window = window
+        // SWIFTSPOT_PROBE_TOUR walks the window through steps for a demo
+        // recording, one per line as `SECONDS ACTION [ARGUMENT]`, each
+        // timed from launch: `route PAGE`, `open PAGE`, `type TEXT`,
+        // `panel queue|lyrics`, `now-playing on|off` and `quit`.
+        if let path = ProcessInfo.processInfo.environment["SWIFTSPOT_PROBE_TOUR"],
+           let script = try? String(contentsOfFile: path, encoding: .utf8) {
+            Task { @MainActor in
+                let start = ContinuousClock.now
+                for line in script.split(separator: "\n") where !line.hasPrefix("#") {
+                    let parts = line.split(separator: " ", maxSplits: 2).map(String.init)
+                    guard parts.count >= 2, let at = Double(parts[0]) else { continue }
+                    try? await Task.sleep(until: start + .seconds(at))
+                    let argument = parts.count > 2 ? parts[2] : ""
+                    switch parts[1] {
+                    case "route": if let route = Route(page: argument) { model.root = route }
+                    case "open": if let route = Route(page: argument) { model.open(route) }
+                    case "type":
+                        model.searchText = ""
+                        for character in argument {
+                            model.searchText.append(character)
+                            try? await Task.sleep(for: .milliseconds(90))
+                        }
+                    case "panel": if let panel = AppModel.Panel(rawValue: argument) { model.togglePanel(panel) }
+                    case "now-playing": model.showNowPlaying = argument != "off"
+                    case "quit": NSApp.terminate(nil)
+                    default: break
+                    }
+                }
+            }
+        }
         // SWIFTSPOT_SNAPSHOT draws the window into a PNG at that path after
         // a few seconds, and quits: it works with the screen locked, where
         // a window capture can't, though without the window server's glass.

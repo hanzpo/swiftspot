@@ -209,7 +209,7 @@ fn playlist(index: usize) -> Playlist {
             display_name: Some(if spotify_owned {
                 "Spotify".into()
             } else {
-                "Carmine".into()
+                "Alex".into()
             }),
             uri: None,
         },
@@ -278,7 +278,7 @@ pub fn populate(app: &mut App) {
     };
     app.user = Some(User {
         id: "demo".into(),
-        display_name: Some("Carmine".into()),
+        display_name: Some("Alex".into()),
         images: image(1),
         product: Some("premium".into()),
         country: Some("DE".into()),
@@ -4392,7 +4392,7 @@ mod tests {
         for (title, detail, view) in [
             (
                 "Late night focus",
-                "Carmine",
+                "Alex",
                 playlist as fn(&mut App, &mut egui::Ui),
             ),
             ("Fragments", "Bonobo", album),
@@ -4440,7 +4440,7 @@ mod tests {
         for (title, detail, view) in [
             (
                 "Late night focus",
-                "Carmine",
+                "Alex",
                 playlist as fn(&mut App, &mut egui::Ui),
             ),
             ("Fragments", "Bonobo", album),

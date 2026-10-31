@@ -7045,6 +7045,33 @@ impl App {
     /// With `shuffle_first`, shuffle is turned on before playback starts,
     /// in one ordered exchange: two independent requests race, and shuffle
     /// sometimes lost.
+    fn free_account(&self) -> bool {
+        self.user
+            .as_ref()
+            .and_then(|user| user.product.as_deref())
+            .is_some_and(|product| product != "premium")
+    }
+
+    /// Opens the browser for the playback grant, unless this computer
+    /// already plays or is on its way to.
+    fn enable_playback(&mut self) {
+        if self.local_ready
+            || matches!(
+                self.local_playback,
+                LocalPlayback::Authorizing | LocalPlayback::Connecting
+            )
+        {
+            return;
+        }
+        self.settings.playback_authorized = true;
+        self.settings_dirty = true;
+        self.backend.send(Command::AuthorizePlayback);
+        self.toast(gettext(
+            self.locale,
+            "Opening your browser to set up local playback",
+        ));
+    }
+
     fn play_request(&mut self, request: PlayRequest, shuffle_first: bool) {
         // Shuffle applies across contexts until disabled. A selected row still
         // starts first; otherwise choose a random starting track.
@@ -7157,6 +7184,13 @@ impl App {
                 ) || (self.settings.playback_authorized
                     && matches!(self.auth, AuthStatus::Starting | AuthStatus::Connecting))
                 {
+                    self.queued_play = Some(request);
+                } else if matches!(self.local_playback, LocalPlayback::Unavailable)
+                    && !self.free_account()
+                {
+                    // Nothing else is playing: this computer is the device
+                    // a first play means, so set it up and play there.
+                    self.enable_playback();
                     self.queued_play = Some(request);
                 } else {
                     self.queue_start_pending = None;
@@ -9625,26 +9659,10 @@ impl App {
                 }
             }
             Action::EnablePlayback => {
-                let free = self
-                    .user
-                    .as_ref()
-                    .and_then(|user| user.product.as_deref())
-                    .is_some_and(|product| product != "premium");
-                if free {
+                if self.free_account() {
                     self.toast_error(gettext(self.locale, "Local playback needs Spotify Premium"));
-                } else if !self.local_ready
-                    && !matches!(
-                        self.local_playback,
-                        LocalPlayback::Authorizing | LocalPlayback::Connecting
-                    )
-                {
-                    self.settings.playback_authorized = true;
-                    self.settings_dirty = true;
-                    self.backend.send(Command::AuthorizePlayback);
-                    self.toast(gettext(
-                        self.locale,
-                        "Opening your browser to set up local playback",
-                    ));
+                } else {
+                    self.enable_playback();
                 }
             }
             Action::OpenUrl(url) => {
@@ -12633,6 +12651,51 @@ mod tests {
 
         assert!(app.queued_play.is_some());
         assert!(!app.show_devices, "startup is not a missing-device error");
+    }
+
+    /// With nothing playing anywhere, a first play sets up this computer
+    /// and plays there once it is ready, instead of asking for a device.
+    #[test]
+    fn a_first_play_sets_up_this_computer_and_plays_there() {
+        let mut app = headless_app();
+        app.local_ready = false;
+        app.local_playback = LocalPlayback::Unavailable;
+        app.settings.playback_authorized = false;
+        app.user = Some(User {
+            product: Some("premium".into()),
+            ..Default::default()
+        });
+
+        app.play_request(PlayRequest::context("spotify:playlist:pl1"), false);
+
+        assert!(app.settings.playback_authorized);
+        assert!(app.queued_play.is_some());
+        assert!(!app.show_devices);
+
+        app.local.connected = true;
+        app.handle_playback(LocalPlayback::Ready {
+            device_id: "local".into(),
+        });
+        assert!(app.queued_play.is_none(), "the ready player took it");
+        assert_eq!(app.target(), Target::Local);
+    }
+
+    /// A free account cannot play here, so it is still asked for a device.
+    #[test]
+    fn a_first_play_on_a_free_account_asks_for_a_device() {
+        let mut app = headless_app();
+        app.local_ready = false;
+        app.local_playback = LocalPlayback::Unavailable;
+        app.user = Some(User {
+            product: Some("free".into()),
+            ..Default::default()
+        });
+
+        app.play_request(PlayRequest::context("spotify:playlist:pl1"), false);
+
+        assert!(!app.settings.playback_authorized);
+        assert!(app.queued_play.is_none());
+        assert!(app.show_devices);
     }
 
     /// Previous and Next move a restored track without starting playback.

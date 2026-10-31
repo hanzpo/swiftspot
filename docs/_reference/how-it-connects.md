@@ -32,6 +32,10 @@ consent dialog. The playback session uses the account ID verified by either
 Web API grant. A verified personal app can complete sign-in while the shared
 app's verification is still waiting.
 
+Playing something while no device is active and local playback was never set
+up starts that approval and plays on this computer once it connects. A free
+account is still asked to choose a device.
+
 Web API sign-in opens the browser only after its local callback port is available. If
 port 8989 is occupied, the sign-in screen keeps the error visible. Close the
 app using that port, then choose **Try again**.

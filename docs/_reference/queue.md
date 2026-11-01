@@ -116,7 +116,9 @@ not consume a queue row or restore an older queue saved on this computer.
    promptly without waiting for the song to finish.
 
 9. **Closing the app keeps the queue.** SwiftSpot saves it locally. When you
-   resume the last song, it restores your queued songs and playlist position.
+   resume the last song, it restores your queued songs and playlist position,
+   and the playlist carries on after that song, even when it was paused or
+   playing from a sorted view when you closed the app.
 
    A song the playlist no longer holds, such as a recommendation that followed
    its end, plays on its own at its saved position, followed by your queued

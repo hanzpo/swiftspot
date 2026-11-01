@@ -118,6 +118,10 @@ not consume a queue row or restore an older queue saved on this computer.
 9. **Closing the app keeps the queue.** SwiftSpot saves it locally. When you
    resume the last song, it restores your queued songs and playlist position.
 
+   A song the playlist no longer holds, such as a recommendation that followed
+   its end, plays on its own at its saved position, followed by your queued
+   songs and, with Autoplay on, Spotify's recommendations for that song.
+
 10. **Old answers from Spotify are ignored.** Queue responses can be a few
     seconds late. SwiftSpot ignores stale responses and asks again. Your
     changes stay visible while it waits for confirmation.

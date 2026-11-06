@@ -134,7 +134,14 @@ final class AppModel {
 
     /// Pauses as soon as the song the timer was set on gives way to another.
     private func checkSleepAfterSong(_ state: PlayerState) {
-        guard let song = sleepAfterSong, state.uri != song else { return }
+        guard let song = sleepAfterSong else { return }
+        let duration = player.durationMs ?? 0
+        let looped = state.uri == song
+            && state.repeat == "track"
+            && (state.positionMs ?? 0) < 5000
+            && duration > 5000
+            && position(at: Date()) > duration - 5000
+        guard state.uri != song || looped else { return }
         sleepAfterSong = nil
         if state.playing == true { toggle() }
     }

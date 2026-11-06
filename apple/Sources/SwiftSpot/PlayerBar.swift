@@ -197,6 +197,13 @@ struct Volume: View {
                     dragging = nil
                 }
             }
+            .task(id: dragging) {
+                guard let value = dragging else { return }
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { return }
+                model.setVolume(Int(value), done: true)
+                dragging = nil
+            }
             .controlSize(.mini)
             .frame(width: 84)
             .disabled(model.player.canSetVolume == false)

@@ -1874,6 +1874,9 @@ impl Worker {
                                 .map_or(CredentialSlot::Playback, web_slot),
                         );
                         let _ = cancel.send(true);
+                        if self.authorizing_source.is_none() {
+                            self.emit(Event::Playback(LocalPlayback::Unavailable));
+                        }
                     }
                     if let Some(source) = self.authorizing_source.take()
                         && matches!(self.api.state(source), SessionState::Authorizing)
@@ -3197,9 +3200,12 @@ impl Worker {
         engine: Option<Engine>,
         error: Option<String>,
     ) {
-        if !may_start_session(self.signed_in, &self.api.state(ApiSource::Shared))
-            || session_generation != self.album_type_lookup.session_generation
-        {
+        let current = session_generation == self.album_type_lookup.session_generation;
+        if !current || !may_start_session(self.signed_in, &self.api.state(ApiSource::Shared)) {
+            if current {
+                self.engine_busy = false;
+                self.engine_restart_pending = false;
+            }
             if let Some(engine) = engine {
                 engine.shutdown();
             }
@@ -7446,6 +7452,49 @@ mod authorization_tests {
                 .try_iter()
                 .any(|event| matches!(event, Event::Error(_)))
         );
+    }
+
+    #[test]
+    fn cancelling_the_playback_grant_leaves_authorizing() {
+        let (runtime, mut worker, events) = worker("cancel-playback-grant");
+        let _entered = runtime.enter();
+        let (cancel, _cancelled) = watch::channel(false);
+        worker.cancel_signin = Some(cancel);
+        let (commands, receiver) = mpsc::unbounded_channel();
+        commands.send(Command::CancelSignIn).unwrap();
+        commands.send(Command::Shutdown).unwrap();
+
+        runtime.block_on(worker.run(receiver));
+
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, Event::Playback(LocalPlayback::Unavailable)))
+        );
+    }
+
+    #[test]
+    fn a_session_that_connects_before_sign_in_can_connect_again() {
+        let (_runtime, mut worker, _events) = worker("early-session");
+        let generation = worker.album_type_lookup.session_generation;
+        worker.engine_busy = true;
+        worker.engine_restart_pending = true;
+
+        worker.on_engine_connected(generation, None, None);
+
+        assert!(!worker.engine_busy);
+        assert!(!worker.engine_restart_pending);
+    }
+
+    #[test]
+    fn a_stale_session_leaves_the_newer_connect_busy() {
+        let (_runtime, mut worker, _events) = worker("stale-session");
+        let generation = worker.album_type_lookup.session_generation;
+        worker.engine_busy = true;
+
+        worker.on_engine_connected(generation.wrapping_add(1), None, None);
+
+        assert!(worker.engine_busy);
     }
 
     #[test]

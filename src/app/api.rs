@@ -1268,7 +1268,8 @@ impl App {
         json!({
             "app": "SwiftSpot",
             "version": env!("CARGO_PKG_VERSION"),
-            "signed_in": self.user.is_some(),
+            "signed_in": self.user.is_some()
+                && !matches!(self.auth, crate::backend::AuthStatus::Refused(_)),
             "auth": match &self.auth {
                 crate::backend::AuthStatus::Starting => "starting",
                 crate::backend::AuthStatus::SignedOut => "signed_out",

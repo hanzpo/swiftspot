@@ -402,7 +402,11 @@ struct DevicesView: View {
             .padding(.bottom, 6)
             if model.localPlayback != "ready" {
                 Button {
-                    model.enablePlayback()
+                    if model.localPlayback == "authorizing" {
+                        model.send("auth.cancel")
+                    } else {
+                        model.enablePlayback()
+                    }
                 } label: {
                     HStack(spacing: 10) {
                         Image(systemName: "laptopcomputer")
@@ -423,7 +427,7 @@ struct DevicesView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(busy)
+                .disabled(model.localPlayback == "connecting")
             }
             if model.devices.isEmpty && model.localPlayback == "ready" {
                 Text("Looking for devices…")
@@ -466,7 +470,7 @@ struct DevicesView: View {
 
     private var localPlaybackNote: String {
         switch model.localPlayback {
-        case "authorizing": "Approve playback in your browser"
+        case "authorizing": "Approve playback in your browser, or click to cancel"
         case "connecting": "Connecting…"
         case "failed": model.localPlaybackError ?? "Couldn't set up playback. Click to try again."
         default: "Set up playback on this Mac"

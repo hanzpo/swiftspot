@@ -1760,6 +1760,16 @@ impl App {
         self.pending_play_at = None;
     }
 
+    fn drop_queued_play(&mut self) {
+        if self.queued_play.take().is_some() {
+            self.clear_play_pending();
+            self.intent_track = None;
+            self.queue_start_pending = None;
+            self.assumed_context = None;
+            self.optimistic_playing = None;
+        }
+    }
+
     /// The colour to tint the interface with, from the playing art.
     pub fn now_playing_tint(&self) -> Option<Color32> {
         if !self.settings.accent_from_art {
@@ -2182,6 +2192,7 @@ impl App {
             }
             AuthStatus::WaitingForBrowser { url } => self.sign_in_url = Some(url.clone()),
             AuthStatus::SignedOut => {
+                self.drop_queued_play();
                 if matches!(self.dialog, Some(Dialog::PersonalAppIntro)) {
                     self.dialog = None;
                 }
@@ -2207,7 +2218,10 @@ impl App {
                 self.toast_error(message.clone());
             }
             // The sign-in screen explains it; a toast would say it twice.
-            AuthStatus::Refused(_) => self.sign_in_url = None,
+            AuthStatus::Refused(_) => {
+                self.sign_in_url = None;
+                self.drop_queued_play();
+            }
             _ => {}
         }
         self.auth = status;
@@ -2218,6 +2232,10 @@ impl App {
             LocalPlayback::Ready { device_id } => {
                 self.local_device_id = Some(device_id.clone());
                 self.local_ready = true;
+                if !self.settings.playback_authorized {
+                    self.settings.playback_authorized = true;
+                    self.settings_dirty = true;
+                }
                 // Spotify's own Home is read over the streaming session,
                 // which a Home load at start-up comes before.
                 if self.home.requested && !self.home.spotify_fetched {
@@ -2232,13 +2250,15 @@ impl App {
             LocalPlayback::Unavailable => {
                 self.local_ready = false;
                 self.local_device_id = None;
+                if self.settings.playback_authorized {
+                    self.settings.playback_authorized = false;
+                    self.settings_dirty = true;
+                }
+                self.drop_queued_play();
             }
             LocalPlayback::Failed(message) => {
                 self.local_ready = false;
-                if self.queued_play.take().is_some() {
-                    self.clear_play_pending();
-                    self.intent_track = None;
-                }
+                self.drop_queued_play();
                 self.toast_error(
                     gettext(self.locale, "Local playback: {error}").replace("{error}", message),
                 );
@@ -7063,8 +7083,6 @@ impl App {
         {
             return;
         }
-        self.settings.playback_authorized = true;
-        self.settings_dirty = true;
         self.backend.send(Command::AuthorizePlayback);
         self.toast(gettext(
             self.locale,
@@ -7535,6 +7553,10 @@ impl App {
     }
 
     fn toggle_play(&mut self) {
+        if self.queued_play.is_some() {
+            self.drop_queued_play();
+            return;
+        }
         let playing = self.now_playing().map(|now| now.playing);
         match self.target() {
             Target::Local => {
@@ -12668,7 +12690,7 @@ mod tests {
 
         app.play_request(PlayRequest::context("spotify:playlist:pl1"), false);
 
-        assert!(app.settings.playback_authorized);
+        assert!(!app.settings.playback_authorized);
         assert!(app.queued_play.is_some());
         assert!(!app.show_devices);
 
@@ -12677,7 +12699,66 @@ mod tests {
             device_id: "local".into(),
         });
         assert!(app.queued_play.is_none(), "the ready player took it");
+        assert!(app.settings.playback_authorized);
         assert_eq!(app.target(), Target::Local);
+    }
+
+    fn app_with_a_queued_first_play() -> App {
+        let mut app = headless_app();
+        app.local_ready = false;
+        app.local_playback = LocalPlayback::Unavailable;
+        app.user = Some(User {
+            product: Some("premium".into()),
+            ..Default::default()
+        });
+        app.play_request(PlayRequest::context("spotify:playlist:pl1"), false);
+        app.handle_playback(LocalPlayback::Authorizing);
+        assert!(app.queued_play.is_some());
+        app
+    }
+
+    #[test]
+    fn cancelling_the_playback_grant_drops_the_queued_play() {
+        let mut app = app_with_a_queued_first_play();
+        app.settings.playback_authorized = true;
+
+        app.handle_playback(LocalPlayback::Unavailable);
+
+        assert!(app.queued_play.is_none());
+        assert!(app.queue_start_pending.is_none());
+        assert!(app.intent_track.is_none());
+        assert!(!app.any_play_pending());
+        assert!(!app.settings.playback_authorized);
+    }
+
+    #[test]
+    fn signing_out_drops_the_queued_play() {
+        let mut app = app_with_a_queued_first_play();
+
+        app.handle_auth(AuthStatus::SignedOut);
+
+        assert!(app.queued_play.is_none());
+        assert!(app.intent_track.is_none());
+    }
+
+    #[test]
+    fn a_refused_grant_drops_the_queued_play() {
+        let mut app = app_with_a_queued_first_play();
+
+        app.handle_auth(AuthStatus::Refused(crate::backend::SignInProblem::Expired));
+
+        assert!(app.queued_play.is_none());
+    }
+
+    #[test]
+    fn pause_drops_a_queued_play_instead_of_replaying_it() {
+        let mut app = app_with_a_queued_first_play();
+
+        app.toggle_play();
+
+        assert!(app.queued_play.is_none());
+        assert!(app.intent_track.is_none());
+        assert!(!app.any_play_pending());
     }
 
     /// A free account cannot play here, so it is still asked for a device.
@@ -20607,6 +20688,19 @@ mod tests {
         assert_eq!(hello["client_id"], other);
         assert_eq!(hello["redirect_uri"], "http://127.0.0.1:8989/login");
         assert!(hello["auth_error"].as_str().unwrap().contains("Client ID"));
+    }
+
+    #[test]
+    fn an_expired_grant_sends_the_mac_app_back_to_sign_in() {
+        let mut app = headless_app();
+        app.user = Some(User::default());
+        assert_eq!(app.api_hello()["signed_in"], true);
+
+        app.handle_auth(AuthStatus::Refused(crate::backend::SignInProblem::Expired));
+
+        let hello = app.api_hello();
+        assert_eq!(hello["signed_in"], false);
+        assert_eq!(hello["sign_in_problem"], "expired");
     }
 
     #[test]

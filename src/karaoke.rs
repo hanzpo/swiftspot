@@ -118,6 +118,7 @@ pub struct Karaoke {
     ended: AtomicBool,
     /// Moves on at every reset, so the model skips windows from before it.
     generation: AtomicU64,
+    retry: AtomicBool,
 }
 
 pub type SharedKaraoke = Arc<Karaoke>;
@@ -142,6 +143,7 @@ impl Default for Karaoke {
             held: AtomicU64::new(0),
             ended: AtomicBool::new(false),
             generation: AtomicU64::new(0),
+            retry: AtomicBool::new(false),
         }
     }
 }
@@ -152,7 +154,10 @@ impl Karaoke {
     }
 
     pub fn set_enabled(&self, on: bool) {
-        self.enabled.store(on, Ordering::Relaxed);
+        let was_on = self.enabled.swap(on, Ordering::Relaxed);
+        if on && !was_on && self.status() == Status::Failed {
+            self.retry.store(true, Ordering::Relaxed);
+        }
     }
 
     pub fn enabled(&self) -> bool {
@@ -191,6 +196,15 @@ impl Karaoke {
 
     fn set_status(&self, status: Status) {
         self.status.store(status as u8, Ordering::Relaxed);
+    }
+
+    fn recovered(&self) {
+        let _ = self.status.compare_exchange(
+            Status::Failed as u8,
+            Status::Running as u8,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        );
     }
 
     /// How far behind the decoder the listener is, because of the stage.
@@ -270,7 +284,10 @@ impl Worker {
                     }
                     let vocals = separator.as_mut().and_then(|separator| {
                         match separator.vocals(&job.audio) {
-                            Ok(vocals) => Some(stretch(&vocals)),
+                            Ok(vocals) => {
+                                control.recovered();
+                                Some(stretch(&vocals))
+                            }
                             Err(error) => {
                                 log::error!("karaoke: the vocal model failed: {error:#}");
                                 control.set_status(Status::Failed);
@@ -375,6 +392,13 @@ impl Stage {
             let mut out = self.drain(true);
             self.worker = None;
             self.control.set_status(Status::Off);
+            self.reset();
+            out.extend(samples);
+            return out;
+        }
+        if self.control.retry.swap(false, Ordering::Relaxed) && self.worker.is_some() {
+            let mut out = self.drain(true);
+            self.worker = None;
             self.reset();
             out.extend(samples);
             return out;
@@ -811,6 +835,51 @@ mod tests {
         out.extend(stage.finish());
         assert_close(&out, &music(0, total));
         assert_eq!(control.status(), Status::Failed);
+    }
+
+    struct FailsOnce(bool);
+
+    impl Separator for FailsOnce {
+        fn vocals(&mut self, audio: &[f32]) -> Result<Vec<f32>> {
+            if std::mem::replace(&mut self.0, false) {
+                anyhow::bail!("one bad run");
+            }
+            Ok(audio.iter().map(|s| s * 0.5).collect())
+        }
+    }
+
+    #[test]
+    fn a_run_that_works_clears_an_earlier_model_error() {
+        let control = control(|| Box::new(FailsOnce(true)));
+        let mut stage = Stage::new(Arc::clone(&control));
+        play(&mut stage, SAMPLE_RATE as usize * 10);
+        control.track_ended();
+        stage.finish();
+        assert_eq!(control.status(), Status::Running);
+    }
+
+    #[test]
+    fn turning_it_back_on_while_paused_loads_a_failed_model_again() {
+        let control = Karaoke::shared();
+        let loads = Arc::new(AtomicU32::new(0));
+        let counted = Arc::clone(&loads);
+        control.set_loader(Some(Arc::new(move || {
+            if counted.fetch_add(1, Ordering::Relaxed) == 0 {
+                anyhow::bail!("no model yet");
+            }
+            Ok(Box::new(Half) as Box<dyn Separator>)
+        })));
+        control.set_enabled(true);
+        let mut stage = Stage::new(Arc::clone(&control));
+        play(&mut stage, SAMPLE_RATE as usize);
+        assert_eq!(control.status(), Status::Failed);
+
+        control.set_enabled(false);
+        control.set_enabled(true);
+        play(&mut stage, SAMPLE_RATE as usize);
+
+        assert_eq!(loads.load(Ordering::Relaxed), 2);
+        assert_eq!(control.status(), Status::Running);
     }
 
     #[test]

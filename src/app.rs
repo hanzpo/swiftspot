@@ -40,6 +40,7 @@ const REMOTE_POLL_MIN: Duration = Duration::from_secs(15);
 /// optimistic holds run out.
 const REMOTE_COMMAND_WINDOW: Duration = Duration::from_secs(10);
 const REMOTE_FRESH: Duration = Duration::from_secs(60);
+const REMOTE_REPEAT_HOLD: Duration = Duration::from_secs(5);
 const DEVICES_FRESH: Duration = Duration::from_secs(12);
 /// How long a cover whose download failed waits before its colour is asked
 /// for again.
@@ -549,6 +550,8 @@ pub struct App {
     repeat_wanted: RepeatMode,
     /// Last local shuffle change, used to ignore its echo from the engine.
     shuffle_set_at: Option<Instant>,
+    repeat_hold: Option<(String, Instant)>,
+    remote_read_failed: bool,
     /// When tracks recently came up unavailable, to spot a key-service
     /// cascade and reconnect once instead of skipping through an album.
     unavailable_at: Vec<Instant>,
@@ -988,6 +991,8 @@ impl App {
             shuffle_wanted: session.shuffle_on,
             repeat_wanted: RepeatMode::from_api(&session.repeat),
             shuffle_set_at: None,
+            repeat_hold: None,
+            remote_read_failed: false,
             unavailable_at: Vec::new(),
             last_unavailable_reconnect: None,
             premium_notice_shown: false,
@@ -1295,7 +1300,7 @@ impl App {
     fn remote_fresh(&self) -> Option<&RemoteSnapshot> {
         self.remote
             .as_ref()
-            .filter(|remote| remote.received_at.elapsed() < REMOTE_FRESH)
+            .filter(|remote| self.remote_read_failed || remote.received_at.elapsed() < REMOTE_FRESH)
     }
 
     /// Where playback commands go: this computer's player or a remote device.
@@ -2270,6 +2275,8 @@ impl App {
 
     fn reset_data(&mut self) {
         self.pending_remote_volume = None;
+        self.repeat_hold = None;
+        self.remote_read_failed = false;
         self.local_transfer_sequence = None;
         self.queue_start_pending = None;
         self.pending_album_queues.clear();
@@ -5040,6 +5047,7 @@ impl App {
                 self.remote_poll_pending = false;
                 match result {
                     Ok(state) => {
+                        self.remote_read_failed = false;
                         self.reconcile_remote_volume(seq, state.as_ref());
                         let previous_uri = self.remote.as_ref().and_then(|remote| {
                             remote
@@ -5052,9 +5060,21 @@ impl App {
                             .remote
                             .as_ref()
                             .map(|remote| remote.state.shuffle_state);
-                        self.remote = state.map(|state| RemoteSnapshot {
-                            state,
-                            received_at: Instant::now(),
+                        let held_repeat = self.repeat_hold.take().filter(|(mode, at)| {
+                            at.elapsed() < REMOTE_REPEAT_HOLD
+                                && state
+                                    .as_ref()
+                                    .is_some_and(|state| state.repeat_state != *mode)
+                        });
+                        self.repeat_hold = held_repeat.clone();
+                        self.remote = state.map(|mut state| {
+                            if let Some((mode, _)) = held_repeat {
+                                state.repeat_state = mode;
+                            }
+                            RemoteSnapshot {
+                                state,
+                                received_at: Instant::now(),
+                            }
                         });
                         if let (Some(previous), Some(current)) = (
                             previous_shuffle,
@@ -5113,7 +5133,10 @@ impl App {
                             self.on_now_playing_changed();
                         }
                     }
-                    Err(error) => log::debug!("playback state unavailable: {error}"),
+                    Err(error) => {
+                        self.remote_read_failed = true;
+                        log::debug!("playback state unavailable: {error}");
+                    }
                 }
             }
             ApiResponse::Queue { seq, result } => {
@@ -6420,13 +6443,19 @@ impl App {
                         if matches!(action, RemoteAction::Volume { .. }) {
                             self.pending_remote_volume = None;
                         }
+                        if action == RemoteAction::Repeat {
+                            self.repeat_hold = None;
+                        }
                         if matches!(
                             action,
                             RemoteAction::Play | RemoteAction::Next | RemoteAction::Previous
-                        ) && self.intent_track.as_ref().is_some_and(|intent| {
-                            matches!(intent.confirmation, TrackConfirmation::Remote { .. })
-                        }) {
-                            self.intent_track = None;
+                        ) {
+                            self.queue_start_pending = None;
+                            if self.intent_track.as_ref().is_some_and(|intent| {
+                                matches!(intent.confirmation, TrackConfirmation::Remote { .. })
+                            }) {
+                                self.intent_track = None;
+                            }
                         }
                         let hint = if error.status() == Some(404) {
                             format!(
@@ -7853,10 +7882,15 @@ impl App {
                 self.session_dirty = true;
                 self.backend.player(PlayerCommand::Repeat(mode));
             }
+            Target::Remote(None) if self.remote_fresh().is_none() => {
+                self.repeat_wanted = mode;
+                self.session_dirty = true;
+            }
             Target::Remote(device_id) => {
                 if let Some(remote) = self.remote.as_mut() {
                     remote.state.repeat_state = mode.api_name().to_string();
                 }
+                self.repeat_hold = Some((mode.api_name().to_string(), Instant::now()));
                 self.backend.api(ApiRequest::Remote {
                     action: RemoteAction::Repeat,
                     device_id,
@@ -8859,7 +8893,9 @@ impl App {
                 // discard that expectation or a quick Next, Previous leaves
                 // the row marker stuck on the skipped-to song.
                 self.intent_track = None;
-                self.queue_start_pending = Some(self.target());
+                if self.changes_song_by_hand(&Action::Previous) {
+                    self.queue_start_pending = Some(self.target());
+                }
                 match self.target() {
                     Target::Local => self.backend.player(PlayerCommand::Previous),
                     Target::Remote(device_id) => self.remote(RemoteAction::Previous, device_id),
@@ -8915,7 +8951,9 @@ impl App {
             }
             Action::SetShuffle(shuffle) => self.set_shuffle(shuffle),
             Action::CycleRepeat => {
-                let mode = self.now_playing().map(|now| now.repeat).unwrap_or_default();
+                let mode = self
+                    .now_playing()
+                    .map_or(self.repeat_wanted, |now| now.repeat);
                 self.set_repeat(mode.next());
             }
             Action::SetRepeat(mode) => self.set_repeat(mode),
@@ -12873,6 +12911,34 @@ mod tests {
             RepeatMode::Off,
             "once playing, the engine's mode is the one saved"
         );
+    }
+
+    #[test]
+    fn repeat_with_no_device_is_kept_for_the_first_load() {
+        let mut app = headless_app();
+        app.local_ready = false;
+        app.remote = None;
+        app.repeat_wanted = RepeatMode::Track;
+
+        app.set_repeat(RepeatMode::Context);
+
+        assert_eq!(app.local_repeat(), RepeatMode::Context);
+        assert!(app.repeat_hold.is_none(), "nothing went to a device");
+    }
+
+    #[test]
+    fn repeat_with_no_song_cycles_from_the_saved_mode_and_reports_it() {
+        let ctx = egui::Context::default();
+        let mut app = headless_app();
+        app.repeat_wanted = RepeatMode::Context;
+        app.frame_now = None;
+
+        assert_eq!(app.api_player()["has_song"], false);
+        assert_eq!(app.api_player()["repeat"], "context");
+
+        app.apply(Action::CycleRepeat, &ctx);
+
+        assert_eq!(app.local_repeat(), RepeatMode::Context.next());
     }
 
     /// Changing songs by hand ends Repeat One and keeps repeating the
@@ -21784,6 +21850,89 @@ mod tests {
             seq,
             result: Ok(Some(state)),
         });
+    }
+
+    fn report_remote_repeat(app: &mut App, seq: u64, repeat: &str) {
+        let mut state = app.remote.as_ref().unwrap().state.clone();
+        state.repeat_state = repeat.into();
+        app.remote_poll_seq = seq;
+        app.handle_api(ApiResponse::PlaybackState {
+            seq,
+            result: Ok(Some(state)),
+        });
+    }
+
+    #[test]
+    fn a_poll_from_before_a_repeat_change_does_not_undo_it() {
+        let mut app = remote_volume_app();
+        app.set_repeat(RepeatMode::Context);
+
+        report_remote_repeat(&mut app, 3, "off");
+        assert_eq!(app.remote.as_ref().unwrap().state.repeat_state, "context");
+
+        report_remote_repeat(&mut app, 4, "context");
+        assert!(app.repeat_hold.is_none());
+
+        report_remote_repeat(&mut app, 5, "off");
+        assert_eq!(app.remote.as_ref().unwrap().state.repeat_state, "off");
+    }
+
+    #[test]
+    fn a_repeat_change_that_failed_is_not_held() {
+        let mut app = remote_volume_app();
+        app.set_repeat(RepeatMode::Context);
+
+        app.handle_api(ApiResponse::Remote {
+            action: RemoteAction::Repeat,
+            result: Err(crate::api::ApiError::RateLimited),
+        });
+        report_remote_repeat(&mut app, 3, "off");
+
+        assert_eq!(app.remote.as_ref().unwrap().state.repeat_state, "off");
+    }
+
+    #[test]
+    fn failed_polls_keep_the_other_device_as_the_target() {
+        let mut app = remote_volume_app();
+        let target = app.target();
+        assert!(matches!(target, Target::Remote(_)));
+        app.remote.as_mut().unwrap().received_at = Instant::now() - REMOTE_FRESH * 2;
+        assert!(app.remote_fresh().is_none(), "age alone lets it lapse");
+
+        app.remote_poll_seq = 3;
+        app.handle_api(ApiResponse::PlaybackState {
+            seq: 3,
+            result: Err(crate::api::ApiError::RateLimited),
+        });
+        assert_eq!(app.target(), target);
+
+        report_remote_repeat(&mut app, 4, "off");
+        assert!(!app.remote_read_failed);
+    }
+
+    #[test]
+    fn previous_that_restarts_the_song_leaves_the_queue_marker_alone() {
+        let ctx = egui::Context::default();
+        let mut app = remote_volume_app();
+        app.remote.as_mut().unwrap().state.progress_ms = Some(60_000);
+        app.queue_start_pending = None;
+
+        app.apply(Action::Previous, &ctx);
+
+        assert!(app.queue_start_pending.is_none());
+    }
+
+    #[test]
+    fn a_failed_remote_play_clears_the_queue_marker() {
+        let mut app = remote_volume_app();
+        app.queue_start_pending = Some(app.target());
+
+        app.handle_api(ApiResponse::Remote {
+            action: RemoteAction::Play,
+            result: Err(crate::api::ApiError::RateLimited),
+        });
+
+        assert!(app.queue_start_pending.is_none());
     }
 
     #[test]

@@ -1314,6 +1314,7 @@ impl App {
             return json!({
                 "has_song": false,
                 "shuffle": self.playing_context_shuffle(),
+                "repeat": repeat_name(self.repeat_wanted),
                 "volume": crate::app::volume_to_percent(self.local.volume),
                 "karaoke": self.api_karaoke(),
             });

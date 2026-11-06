@@ -9,13 +9,18 @@ use std::ffi::OsStr;
 use std::io;
 
 /// Opens a URL or a path in whatever the desktop uses for it.
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(test)))]
 pub fn open(target: impl AsRef<OsStr>) -> io::Result<()> {
     open::that(target.as_ref())
 }
 
+#[cfg(test)]
+pub fn open(_target: impl AsRef<OsStr>) -> io::Result<()> {
+    Ok(())
+}
+
 /// Opens a URL or a path in whatever the desktop uses for it.
-#[cfg(windows)]
+#[cfg(all(windows, not(test)))]
 pub fn open(target: impl AsRef<OsStr>) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};

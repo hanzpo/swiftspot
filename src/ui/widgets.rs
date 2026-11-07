@@ -1315,7 +1315,8 @@ fn track_row_contents(
     let is_current = !matches!(row.context, RowContext::Queue)
         && app
             .current_track_uri()
-            .is_some_and(|uri| uri == row.item.uri());
+            .is_some_and(|uri| uri == row.item.uri())
+        && app.row_in_playing_list(&row.context);
     let playing = is_current && app.believed_playing();
     let hovered = ui.rect_contains_pointer(rect) || response.has_focus();
     // Music's song lists: stripes on alternate rows, and a selection in

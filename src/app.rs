@@ -1371,6 +1371,20 @@ impl App {
         }
     }
 
+    pub fn row_in_playing_list(&self, context: &RowContext) -> bool {
+        let (RowContext::Context { uri: list, .. }
+        | RowContext::View {
+            context_uri: list, ..
+        }) = context
+        else {
+            return true;
+        };
+        !list.starts_with("spotify:playlist:")
+            || self
+                .playing_context_uri()
+                .is_none_or(|playing| playing == *list)
+    }
+
     /// Context shown as playing, including pending local play requests.
     pub fn playing_context_uri(&self) -> Option<String> {
         let remote = self
@@ -18252,6 +18266,35 @@ mod tests {
         app.handle_local(local("spotify:track:recommended"));
         assert_eq!(app.manual_queue, ["spotify:track:queued"]);
         assert!(app.backend.take_player_commands().is_empty());
+    }
+
+    #[test]
+    fn the_playing_song_marks_only_the_playlist_it_plays_from() {
+        let mut app = headless_app();
+        let playlist = |id: &str| RowContext::Context {
+            uri: format!("spotify:playlist:{id}"),
+            editable_playlist: None,
+        };
+        let view = RowContext::View {
+            uris: Arc::from(["spotify:track:both".to_string()]),
+            context_uri: "spotify:playlist:other".into(),
+            editable_playlist: None,
+        };
+        assert!(app.row_in_playing_list(&playlist("other")), "nothing says");
+
+        app.assumed_context = Some(AssumedContext {
+            uri: "spotify:playlist:here".into(),
+            shuffle: None,
+            at: Instant::now(),
+        });
+
+        assert!(app.row_in_playing_list(&playlist("here")));
+        assert!(!app.row_in_playing_list(&playlist("other")));
+        assert!(!app.row_in_playing_list(&view));
+        assert!(app.row_in_playing_list(&RowContext::Context {
+            uri: "spotify:album:a".into(),
+            editable_playlist: None,
+        }));
     }
 
     fn headless_app() -> App {

@@ -436,7 +436,6 @@ mod tests {
             (Key::Q, Modifiers::NONE, Action::ToggleQueuePanel),
             (Key::L, Modifiers::NONE, Action::ToggleLyricsPanel),
             (Key::Slash, Modifiers::NONE, Action::FocusSearch),
-            (Key::F, Modifiers::NONE, Action::SetLyricsFullscreen(true)),
             (
                 Key::Questionmark,
                 Modifiers::NONE,

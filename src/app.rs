@@ -12845,6 +12845,7 @@ mod tests {
     #[test]
     fn a_first_play_sets_up_this_computer_and_plays_there() {
         let mut app = headless_app();
+        app.backend.set_offline(true);
         app.local_ready = false;
         app.local_playback = LocalPlayback::Unavailable;
         app.settings.playback_authorized = false;
@@ -12870,6 +12871,7 @@ mod tests {
 
     fn app_with_a_queued_first_play() -> App {
         let mut app = headless_app();
+        app.backend.set_offline(true);
         app.local_ready = false;
         app.local_playback = LocalPlayback::Unavailable;
         app.user = Some(User {

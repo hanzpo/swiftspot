@@ -262,6 +262,35 @@ struct QueueState: Codable, Sendable {
     var clearable: Bool?
 }
 
+struct JamState: Codable, Sendable {
+    var jam: Jam?
+    var invite: JamInvite?
+    var busy: Bool
+    var canStart: Bool
+}
+
+struct Jam: Codable, Sendable {
+    var hosting: Bool
+    var host: String?
+    var inviteUrl: String?
+    var canRemove: Bool
+    var members: [JamMember]
+}
+
+struct JamMember: Codable, Identifiable, Sendable {
+    var id: String
+    var name: String
+    var image: String?
+    var you: Bool
+    var host: Bool
+}
+
+struct JamInvite: Codable, Sendable {
+    var token: String
+    var host: String
+    var people: Int
+}
+
 struct Device: Codable, Hashable, Identifiable, Sendable {
     var id: String
     var name: String

@@ -25,7 +25,8 @@ sends `{"id": 1, "method": "…", "params": {…}}` and gets back
 `{"id": 1, "result": …}` or `{"id": 1, "error": "…"}`. The server also
 pushes `{"event": "player", "data": …}` whenever playback changes, apart
 from the position simply moving on, and `lyrics` when the playing song's
-words have been placed in time.
+words have been placed in time, and `jam` when the account's Jam, a Jam
+invitation waiting for an answer, or a Jam being started changes.
 
 | Method | Params | Answers |
 | --- | --- | --- |
@@ -44,6 +45,12 @@ words have been placed in time.
 | `lyrics.get` | | `uri`, `synced`, `lines`: `time_ms`, `text`, `words`? |
 | `words.prepare` | `uri` | |
 | `queue.add` | `uri`, `name`? | |
+| `jam.get` | | `jam` (`hosting`, `host`, `invite_url`, `can_remove`, `members`), `invite`, `busy`, `can_start` |
+| `jam.start`, `jam.end`, `jam.leave` | | |
+| `jam.remove` | `member` | |
+| `jam.open` | `link` (a Jam invitation, short links too) | |
+| `jam.join` | `token` | |
+| `jam.decline` | | |
 | `library.playlists` | | `playlists`, `liked_context` |
 | `library.liked` | | `tracks`, `total`, `more`, `context` |
 | `library.albums` | | `albums`, `more` |
@@ -60,6 +67,10 @@ opens the browser to authorize it.
 
 The player carries `karaoke`: `available`, `on`, `level`, and `status`
 (`off`, `downloading`, `preparing`, `running` or `failed`, with `error`).
+
+A Jam member carries `id`, `name`, `image`, `you` and `host`. An
+`invite` (`token`, `host`, `people`) is an opened invitation waiting for
+`jam.join` or `jam.decline`. A Jam link searched for opens its invitation.
 
 A line's `words`, once placed, are its words with `marks`: when each
 character starts, in milliseconds, and when the word ends.

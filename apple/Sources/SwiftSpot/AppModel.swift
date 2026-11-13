@@ -94,6 +94,7 @@ final class AppModel {
     enum Panel: String { case queue, lyrics }
     var panel: Panel?
     var queue: QueueState?
+    var jam: JamState?
     var lyrics: LyricsState?
     var devices: [Device] = []
     /// Whether this Mac can play; see `DevicesState.localPlayback`.
@@ -203,6 +204,7 @@ final class AppModel {
             setPlayer(state)
         }
         await loadPlaylists()
+        await loadJam()
         revision += 1
     }
 
@@ -232,6 +234,8 @@ final class AppModel {
             }
         case "queue":
             if panel == .queue { Task { await loadQueue() } }
+        case "jam":
+            Task { await loadJam() }
         case "lyrics":
             // Words placed in the song: a lyrics view shows them sung.
             if lyrics != nil { Task { await loadLyrics() } }
@@ -573,6 +577,43 @@ final class AppModel {
     func transfer(to device: Device) {
         for index in devices.indices { devices[index].active = devices[index].id == device.id }
         send("devices.transfer", ["id": device.id])
+    }
+
+    // MARK: Jam
+
+    func loadJam() async {
+        let waiting = jam?.busy == true && jam?.jam == nil
+        guard let state = try? await call("jam.get", as: JamState.self) else { return }
+        jam = state
+        if waiting, state.jam != nil, panel != .queue {
+            panel = .queue
+            await loadQueue()
+        }
+    }
+
+    func startJam() {
+        jam?.busy = true
+        send("jam.start")
+    }
+
+    func endJam() { send("jam.end") }
+    func leaveJam() { send("jam.leave") }
+    func removeFromJam(_ member: JamMember) { send("jam.remove", ["member": member.id]) }
+    func joinJam(_ invite: JamInvite) {
+        jam?.invite = nil
+        jam?.busy = true
+        send("jam.join", ["token": invite.token])
+    }
+    func declineJam() {
+        jam?.invite = nil
+        send("jam.decline")
+    }
+
+    func copyJamLink() {
+        guard let link = jam?.jam?.inviteUrl else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(link, forType: .string)
+        show("Invite link copied")
     }
 
     // MARK: Library edits

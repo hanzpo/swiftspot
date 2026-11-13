@@ -21343,6 +21343,107 @@ mod tests {
         assert_eq!(app.api_devices()["local_playback"], "ready");
     }
 
+    /// A front end reads the Jam and acts on it the way the window does.
+    #[test]
+    fn the_api_shows_and_drives_the_jam() {
+        let mut app = headless_app();
+        let call = |app: &mut App, method: &str, params: serde_json::Value| {
+            app.actions.clear();
+            app.answer(&crate::server::Request {
+                client: 0,
+                id: serde_json::json!(1),
+                method: method.into(),
+                params,
+            })
+        };
+        let empty = call(&mut app, "jam.get", serde_json::json!({})).unwrap();
+        assert!(empty["jam"].is_null());
+        assert!(empty["invite"].is_null());
+
+        app.jam = Some(crate::jam::Jam {
+            id: "jam".into(),
+            token: "TOKEN".into(),
+            owner_id: "host".into(),
+            hosting: true,
+            members: vec![
+                crate::jam::Member {
+                    id: "host".into(),
+                    name: "Ana".into(),
+                    image: None,
+                    you: true,
+                },
+                crate::jam::Member {
+                    id: "guest".into(),
+                    name: "Bo".into(),
+                    image: Some("https://i.scdn.co/image/b".into()),
+                    you: false,
+                },
+            ],
+            host_device: None,
+            host_device_name: None,
+            redirects_commands: false,
+            timestamp: 1,
+            can_remove: true,
+        });
+        let shown = call(&mut app, "jam.get", serde_json::json!({})).unwrap();
+        assert_eq!(shown["jam"]["hosting"], true);
+        assert_eq!(shown["jam"]["host"], "Ana");
+        assert_eq!(
+            shown["jam"]["invite_url"],
+            "https://open.spotify.com/socialsession/TOKEN"
+        );
+        assert_eq!(
+            shown["jam"]["members"][1]["image"],
+            "https://i.scdn.co/image/b"
+        );
+        assert_eq!(shown["jam"]["members"][0]["host"], true);
+        assert_eq!(shown["jam"]["members"][1]["host"], false);
+
+        call(
+            &mut app,
+            "jam.remove",
+            serde_json::json!({"member": "guest"}),
+        )
+        .unwrap();
+        assert!(
+            matches!(app.actions.as_slice(), [Action::RemoveFromJam(member)] if member == "guest")
+        );
+        call(&mut app, "jam.end", serde_json::json!({})).unwrap();
+        assert!(matches!(app.actions.as_slice(), [Action::EndJam]));
+        assert!(call(&mut app, "jam.open", serde_json::json!({"link": "hello"})).is_err());
+        call(
+            &mut app,
+            "jam.open",
+            serde_json::json!({"link": "https://open.spotify.com/socialsession/TOKEN"}),
+        )
+        .unwrap();
+        assert!(matches!(
+            app.actions.as_slice(),
+            [Action::OpenLink(uri)] if uri == "spotify:socialsession:TOKEN"
+        ));
+
+        app.dialog = Some(Dialog::JoinJam(crate::jam::Invite {
+            token: "OTHER".into(),
+            host: "Cy".into(),
+            people: 4,
+        }));
+        let invited = call(&mut app, "jam.get", serde_json::json!({})).unwrap();
+        assert_eq!(invited["invite"]["host"], "Cy");
+        let link = serde_json::json!({"query": "https://spotify.link/AbC"});
+        let answer = call(&mut app, "search", link.clone()).unwrap();
+        assert_eq!(answer["loading"], false);
+        assert!(matches!(
+            app.actions.as_slice(),
+            [Action::OpenLink(uri)] if uri == "https://spotify.link/AbC"
+        ));
+        call(&mut app, "search", link).unwrap();
+        assert!(app.actions.is_empty(), "asked again, opened once");
+        call(&mut app, "jam.join", serde_json::json!({"token": "OTHER"})).unwrap();
+        assert!(matches!(app.actions.as_slice(), [Action::JoinJam(token)] if token == "OTHER"));
+        call(&mut app, "jam.decline", serde_json::json!({})).unwrap();
+        assert!(matches!(app.actions.as_slice(), [Action::CloseDialog]));
+    }
+
     #[test]
     fn signing_in_takes_the_client_id_typed_and_explains_refusals() {
         let mut app = headless_app();

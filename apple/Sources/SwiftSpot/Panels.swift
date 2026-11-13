@@ -29,6 +29,9 @@ struct QueueView: View {
     private var upNext: some View {
         let queue = model.queue
         return List {
+            if let jam = model.jam?.jam {
+                JamSection(jam: jam)
+            }
             if let current = queue?.current {
                 Section("Now Playing") {
                     QueueRow(track: current, playing: true)
@@ -146,6 +149,51 @@ struct HistoryList: View {
             guard let next = try? await model.call("library.recent", as: RecentPlays.self) else { return }
             plays = next
             if next.tracks.count > count || next.more != true { return }
+        }
+    }
+}
+
+/// Who is in the Jam, the invitation, and the way out. Its songs are the
+/// queue below.
+struct JamSection: View {
+    @Environment(AppModel.self) private var model
+    var jam: Jam
+
+    var body: some View {
+        Section {
+            ForEach(jam.members) { member in
+                HStack(spacing: 10) {
+                    Artwork(url: member.image, size: 28, placeholder: "person.fill", circle: true)
+                    Text(member.you ? "\(member.name) (you)" : member.name)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    if member.host {
+                        Text("Host")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .contextMenu {
+                    if jam.hosting, jam.canRemove, !member.you, !member.host {
+                        Button("Remove from Jam", systemImage: "person.badge.minus") {
+                            model.removeFromJam(member)
+                        }
+                    }
+                }
+            }
+        } header: {
+            HStack {
+                Text("Jam")
+                Spacer()
+                if jam.inviteUrl != nil {
+                    Button("Copy Invite Link") { model.copyJamLink() }
+                        .buttonStyle(.link)
+                }
+                Button(jam.hosting ? "End" : "Leave") {
+                    if jam.hosting { model.endJam() } else { model.leaveJam() }
+                }
+                .buttonStyle(.link)
+            }
         }
     }
 }
@@ -458,14 +506,47 @@ struct DevicesView: View {
                 .buttonStyle(.plain)
                 .background(RoundedRectangle(cornerRadius: 6).fill(device.active ? AnyShapeStyle(.quinary) : AnyShapeStyle(.clear)))
             }
+            if let state = model.jam, state.jam != nil || state.canStart {
+                Divider().padding(.vertical, 4)
+                Button {
+                    if state.jam != nil {
+                        if model.panel != .queue { model.togglePanel(.queue) }
+                    } else {
+                        model.startJam()
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "person.2.fill")
+                            .frame(width: 22)
+                            .foregroundStyle(.secondary)
+                        Text(jamLabel(state)).lineLimit(1)
+                        Spacer()
+                        if state.busy { ProgressView().controlSize(.small) }
+                    }
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(state.busy)
+            }
         }
         .padding(14)
         .frame(width: 290)
-        .task { await model.loadDevices() }
+        .task {
+            await model.loadJam()
+            await model.loadDevices()
+        }
     }
 
     private var busy: Bool {
         model.localPlayback == "authorizing" || model.localPlayback == "connecting"
+    }
+
+    private func jamLabel(_ state: JamState) -> String {
+        guard let jam = state.jam else { return "Start a Jam" }
+        let count = jam.members.count
+        return count == 1 ? "In a Jam with 1 person" : "In a Jam with \(count) people"
     }
 
     private var localPlaybackNote: String {

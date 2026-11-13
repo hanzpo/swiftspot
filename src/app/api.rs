@@ -34,6 +34,7 @@ pub(super) struct Pushed {
     library: u64,
     auth: u64,
     queue: u64,
+    jam: u64,
     lyrics: u64,
     toast: Option<std::time::Instant>,
     /// When a client last carried the playlists on past a failed page:
@@ -454,6 +455,14 @@ impl App {
             self.api_pushed.queue = queue;
         }
 
+        let jam = fingerprint(self.api_jam().to_string());
+        if jam != self.api_pushed.jam {
+            if self.api_pushed.jam != 0 {
+                server.broadcast("jam", Value::Null);
+            }
+            self.api_pushed.jam = jam;
+        }
+
         // Words placed in the playing song are news to a lyrics view.
         let lyrics = fingerprint((
             self.lyrics_uri.clone(),
@@ -512,6 +521,40 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// The account's Jam, an invitation waiting for an answer, and whether
+    /// one is being started or joined.
+    pub(super) fn api_jam(&self) -> Value {
+        let invite = match &self.dialog {
+            Some(crate::model::Dialog::JoinJam(invite)) => json!({
+                "token": invite.token,
+                "host": invite.host,
+                "people": invite.people,
+            }),
+            _ => Value::Null,
+        };
+        let jam = self.jam.as_ref().map(|jam| {
+            json!({
+                "hosting": jam.hosting,
+                "host": jam.host().map(|host| host.name.clone()),
+                "invite_url": crate::util::open_spotify_url(&jam.invite_uri()),
+                "can_remove": jam.can_remove,
+                "members": jam.members.iter().map(|member| json!({
+                    "id": member.id,
+                    "name": member.name,
+                    "image": member.image,
+                    "you": member.you,
+                    "host": member.id == jam.owner_id,
+                })).collect::<Vec<_>>(),
+            })
+        });
+        json!({
+            "jam": jam,
+            "invite": invite,
+            "busy": self.jam_busy,
+            "can_start": self.local_ready,
+        })
     }
 
     pub(super) fn answer(&mut self, request: &Request) -> Result<Value, String> {
@@ -697,6 +740,48 @@ impl App {
                     (None, None) => return Err("give \"context\", \"uris\" or \"uri\"".into()),
                 };
                 self.actions.push(action);
+                ok()
+            }
+
+            // ---- Jam -------------------------------------------------------
+            "jam.get" => Ok(self.api_jam()),
+            "jam.start" => {
+                self.actions.push(Action::StartJam);
+                ok()
+            }
+            "jam.end" => {
+                self.actions.push(Action::EndJam);
+                ok()
+            }
+            "jam.leave" => {
+                self.actions.push(Action::LeaveJam);
+                ok()
+            }
+            "jam.remove" => {
+                self.actions.push(Action::RemoveFromJam(
+                    param_str(params, "member")?.to_string(),
+                ));
+                ok()
+            }
+            "jam.open" => {
+                let link = param_str(params, "link")?;
+                if !crate::jam::is_invitation(link) {
+                    return Err("That isn't a Jam link".into());
+                }
+                self.actions.push(Action::OpenLink(
+                    crate::link::parse(link).unwrap_or_default(),
+                ));
+                ok()
+            }
+            "jam.join" => {
+                self.actions
+                    .push(Action::JoinJam(param_str(params, "token")?.to_string()));
+                ok()
+            }
+            "jam.decline" => {
+                if matches!(self.dialog, Some(crate::model::Dialog::JoinJam(_))) {
+                    self.actions.push(Action::CloseDialog);
+                }
                 ok()
             }
 
@@ -989,6 +1074,26 @@ impl App {
             }
             "search" => {
                 let query = param_str(params, "query")?.trim().to_string();
+                // A Jam link is an invitation, opened once however often
+                // the client asks.
+                if crate::jam::is_invitation(&query) {
+                    if self.search.committed != query {
+                        self.search.committed = query.clone();
+                        self.actions.push(Action::OpenLink(
+                            crate::link::parse(&query).unwrap_or_default(),
+                        ));
+                    }
+                    return Ok(json!({
+                        "query": query,
+                        "loading": false,
+                        "tracks": [],
+                        "artists": [],
+                        "albums": [],
+                        "playlists": [],
+                        "shows": [],
+                        "episodes": [],
+                    }));
+                }
                 if self.search.committed != query
                     || matches!(self.search.results, Loadable::NotLoaded)
                 {

@@ -3,6 +3,11 @@ import SwiftUI
 struct ContentView: View {
     @Environment(AppModel.self) private var model
 
+    private var joinTitle: String {
+        guard let host = model.jam?.invite?.host, !host.isEmpty else { return "Join this Jam?" }
+        return "Join \(host)'s Jam?"
+    }
+
     var body: some View {
         @Bindable var model = model
         Group {
@@ -34,6 +39,18 @@ struct ContentView: View {
         }
         .sheet(item: $model.editingPlaylist) { playlist in
             EditPlaylistSheet(playlist: playlist)
+        }
+        .alert(
+            joinTitle,
+            isPresented: Binding(
+                get: { model.jam?.invite != nil },
+                set: { shown in if !shown, model.jam?.invite != nil { model.declineJam() } }),
+            presenting: model.jam?.invite
+        ) { invite in
+            Button("Join") { model.joinJam(invite) }
+            Button("Cancel", role: .cancel) { model.declineJam() }
+        } message: { _ in
+            Text("You will listen along on this Mac and can add songs to the queue.")
         }
         // No least size here: the split view sums its columns' own, and a
         // second one fights it whenever the inspector opens, until AppKit

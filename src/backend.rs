@@ -808,6 +808,14 @@ pub enum Command {
     /// Read someone's profile and public playlists through the streaming
     /// session.
     UserProfile(String),
+    /// Act on the account's Jam through the streaming session.
+    Jam(JamRequest),
+    /// Internal: a Jam request or pushed update finished for the engine
+    /// watch it started under.
+    JamDone {
+        watch: u64,
+        outcome: JamOutcome,
+    },
     /// Internal: a profile finished loading for the session it started in.
     UserProfileResolved {
         session_generation: u64,
@@ -841,6 +849,35 @@ pub enum Command {
         engine_generation: u64,
         result: Result<bool, String>,
     },
+}
+
+/// What the interface asks of the account's Jam.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum JamRequest {
+    /// Start a Jam played on `device`, or show the one already running.
+    Start { device: String },
+    /// End the Jam this account hosts.
+    End,
+    /// Leave someone else's Jam.
+    Leave,
+    /// Remove someone from the Jam this account hosts.
+    Remove(String),
+    /// Find the Jam an invitation link leads to, short links included.
+    Open(String),
+    /// Join the Jam behind a join token, listening on this computer.
+    Join(String),
+    /// A player command a guest sends through the Jam to its host.
+    Send(crate::jam::Command),
+}
+
+#[derive(Debug)]
+pub enum JamOutcome {
+    Session(Option<crate::jam::Jam>),
+    Pushed(crate::jam::Update),
+    Invite(Result<Option<crate::jam::Invite>, String>),
+    /// A short link led somewhere other than a Jam.
+    Link(String),
+    Failed(String),
 }
 
 pub struct LyricsRequest {
@@ -945,6 +982,14 @@ pub enum Event {
         id: String,
         result: Result<crate::api::models::UserProfile, String>,
     },
+    /// The account's Jam, or `None` when it is in none.
+    Jam(Option<crate::jam::Jam>),
+    /// The Jam an opened invitation leads to, or `None` when it has ended.
+    JamInvite(Option<crate::jam::Invite>),
+    /// A Jam request failed, with what to tell the listener.
+    JamFailed(String),
+    /// A followed short link's page, as [`crate::link::parse`] gives it.
+    OpenLink(String),
     /// Whether Spotify's internal metadata positively identifies an album as an EP.
     AlbumType {
         uri: String,
@@ -1017,6 +1062,8 @@ pub struct Backend {
     album_type_requests: std::sync::Mutex<Vec<Vec<String>>>,
     #[cfg(test)]
     home_episode_requests: std::sync::Mutex<Vec<(Vec<String>, u64)>>,
+    #[cfg(test)]
+    jam_requests: std::sync::Mutex<Vec<JamRequest>>,
 }
 
 impl Backend {
@@ -1103,6 +1150,8 @@ impl Backend {
             album_type_requests: std::sync::Mutex::new(Vec::new()),
             #[cfg(test)]
             home_episode_requests: std::sync::Mutex::new(Vec::new()),
+            #[cfg(test)]
+            jam_requests: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -1119,6 +1168,13 @@ impl Backend {
     }
 
     pub fn send(&self, command: Command) {
+        #[cfg(test)]
+        if let Command::Jam(request) = &command {
+            self.jam_requests
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(request.clone());
+        }
         if self.offline && !matches!(command, Command::Accent { .. } | Command::Shutdown) {
             return;
         }
@@ -1225,6 +1281,16 @@ impl Backend {
                 ));
         }
         self.send(Command::Api(request));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_jam_requests(&self) -> Vec<JamRequest> {
+        std::mem::take(
+            &mut *self
+                .jam_requests
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        )
     }
 
     #[cfg(test)]
@@ -1529,6 +1595,11 @@ struct Worker {
     radio_waiting: BTreeMap<String, u64>,
     /// Profiles asked for before the streaming session was ready.
     profiles_waiting: BTreeSet<String>,
+    /// The account's Jam as last read or pushed.
+    jam: Option<crate::jam::Jam>,
+    /// Counts engine sessions watched for Jam updates; answers from an
+    /// older one are dropped.
+    jam_watch: u64,
     /// True while a playback grant or engine connection is in flight, so a
     /// second attempt does not pile up.
     engine_busy: bool,
@@ -1603,6 +1674,8 @@ impl Worker {
             playlist_header_lookup: PlaylistHeaderLookup::default(),
             radio_waiting: BTreeMap::new(),
             profiles_waiting: BTreeSet::new(),
+            jam: None,
+            jam_watch: 0,
             engine_busy: false,
             kept_player: None,
             search_tasks: Vec::new(),
@@ -2219,6 +2292,12 @@ impl Worker {
                     self.profiles_waiting.insert(id);
                     self.start_user_profiles();
                 }
+                Command::Jam(request) => self.jam_request(request),
+                Command::JamDone { watch, outcome } => {
+                    if watch == self.jam_watch {
+                        self.jam_done(outcome);
+                    }
+                }
                 Command::UserProfileResolved {
                     session_generation,
                     id,
@@ -2824,6 +2903,10 @@ impl Worker {
         self.playlist_header_lookup.clear_engine_work();
         self.radio_waiting.clear();
         self.profiles_waiting.clear();
+        self.jam_watch += 1;
+        if self.jam.take().is_some() {
+            self.emit(Event::Jam(None));
+        }
         self.carry_volume();
         if let Some(engine) = self.engine.take() {
             engine.shutdown();
@@ -3282,6 +3365,7 @@ impl Worker {
                 self.start_playlist_header_lookup();
                 self.start_radio();
                 self.start_user_profiles();
+                self.watch_jam();
             }
             None => {
                 self.resume = None;
@@ -3646,6 +3730,195 @@ impl Worker {
                     result,
                 });
             });
+        }
+    }
+
+    /// Follows the account's Jam on a newly connected engine: reads it once,
+    /// then takes every update Spotify pushes to the session.
+    fn watch_jam(&mut self) {
+        let Some(engine) = self.engine.clone() else {
+            return;
+        };
+        self.jam_watch += 1;
+        let watch = self.jam_watch;
+        let commands = self.commands.clone();
+        match engine
+            .session()
+            .dealer()
+            .listen_for("social-connect/v2/session_update", |message| {
+                Ok(match message.payload {
+                    librespot_core::dealer::protocol::PayloadValue::Json(json) => json,
+                    _ => String::new(),
+                })
+            }) {
+            Ok(mut updates) => {
+                let commands = commands.clone();
+                tokio::spawn(async move {
+                    use futures_util::StreamExt as _;
+                    while let Some(update) = updates.next().await {
+                        let Some(update) = update.ok().as_deref().and_then(crate::jam::update)
+                        else {
+                            continue;
+                        };
+                        let outcome = JamOutcome::Pushed(update);
+                        if commands.send(Command::JamDone { watch, outcome }).is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+            Err(error) => log::warn!("couldn't follow Jam updates: {error}"),
+        }
+        tokio::spawn(async move {
+            match crate::jam::current(engine.session()).await {
+                Ok(jam) => {
+                    let outcome = JamOutcome::Session(jam);
+                    let _ = commands.send(Command::JamDone { watch, outcome });
+                }
+                Err(error) => log::warn!("couldn't read the Jam: {error:#}"),
+            }
+        });
+    }
+
+    fn jam_request(&mut self, request: JamRequest) {
+        if let JamRequest::Open(link) = &request
+            && crate::jam::token(link).is_none()
+            && !crate::jam::is_short_link(link)
+        {
+            return;
+        }
+        let Some(engine) = self.engine.clone() else {
+            self.emit(Event::JamFailed(
+                "Set up playback on this computer to use Jam.".into(),
+            ));
+            return;
+        };
+        let watch = self.jam_watch;
+        let commands = self.commands.clone();
+        let jam = self.jam.clone();
+        let http = self.http.client();
+        tokio::spawn(async move {
+            let session = engine.session();
+            let device = engine.device_id().to_string();
+            let outcome = match request {
+                JamRequest::Start { device } => match crate::jam::start(session, &device).await {
+                    Ok(jam) => JamOutcome::Session(Some(jam)),
+                    Err(error) => {
+                        log::warn!("couldn't start a Jam: {error:#}");
+                        JamOutcome::Failed("Couldn't start a Jam. Try again.".into())
+                    }
+                },
+                JamRequest::End => match jam {
+                    Some(jam) => match crate::jam::end(session, &jam.id).await {
+                        Ok(()) => JamOutcome::Session(None),
+                        Err(error) => {
+                            log::warn!("couldn't end the Jam: {error:#}");
+                            JamOutcome::Failed("Couldn't end the Jam. Try again.".into())
+                        }
+                    },
+                    None => JamOutcome::Session(None),
+                },
+                JamRequest::Leave => match jam {
+                    Some(jam) => match crate::jam::leave(session, &jam.id).await {
+                        Ok(()) => JamOutcome::Session(None),
+                        Err(error) => {
+                            log::warn!("couldn't leave the Jam: {error:#}");
+                            JamOutcome::Failed("Couldn't leave the Jam. Try again.".into())
+                        }
+                    },
+                    None => JamOutcome::Session(None),
+                },
+                JamRequest::Remove(member) => match jam {
+                    Some(jam) => match crate::jam::remove(session, &jam.id, &member).await {
+                        Ok(Some(jam)) => JamOutcome::Session(Some(jam)),
+                        Ok(None) => match crate::jam::current(session).await {
+                            Ok(jam) => JamOutcome::Session(jam),
+                            Err(_) => return,
+                        },
+                        Err(error) => {
+                            log::warn!("couldn't remove someone from the Jam: {error:#}");
+                            JamOutcome::Failed("Couldn't remove them. Try again.".into())
+                        }
+                    },
+                    None => return,
+                },
+                JamRequest::Open(link) => {
+                    let address = if crate::jam::is_short_link(&link) {
+                        match http {
+                            Ok(client) => follow_short_link(&client, &link).await,
+                            Err(_) => None,
+                        }
+                    } else {
+                        Some(link)
+                    };
+                    let token = address.as_deref().and_then(crate::jam::token);
+                    if token.is_none()
+                        && let Some(uri) = address.as_deref().and_then(crate::link::parse)
+                    {
+                        let outcome = JamOutcome::Link(uri);
+                        let _ = commands.send(Command::JamDone { watch, outcome });
+                        return;
+                    }
+                    match token {
+                        Some(token) => JamOutcome::Invite(
+                            crate::jam::invite(session, &token).await.map_err(|error| {
+                                log::warn!("couldn't read a Jam invitation: {error:#}");
+                                "Couldn't open this Jam. Try again.".to_string()
+                            }),
+                        ),
+                        None => JamOutcome::Invite(Ok(None)),
+                    }
+                }
+                JamRequest::Join(token) => match crate::jam::join(session, &token, &device).await {
+                    Ok(jam) => JamOutcome::Session(Some(jam)),
+                    Err(error) => {
+                        log::warn!("couldn't join a Jam: {error:#}");
+                        JamOutcome::Failed("Couldn't join the Jam. Try again.".into())
+                    }
+                },
+                JamRequest::Send(command) => {
+                    let Some(jam) = jam else { return };
+                    match crate::jam::send(session, &jam.id, &device, &command).await {
+                        Ok(true) => return,
+                        Ok(false) => JamOutcome::Session(None),
+                        Err(error) => {
+                            log::warn!("couldn't send {command:?} through the Jam: {error:#}");
+                            JamOutcome::Failed("The Jam didn't take that. Try again.".into())
+                        }
+                    }
+                }
+            };
+            let _ = commands.send(Command::JamDone { watch, outcome });
+        });
+    }
+
+    fn jam_done(&mut self, outcome: JamOutcome) {
+        match outcome {
+            JamOutcome::Session(jam) => self.set_jam(jam),
+            JamOutcome::Pushed(crate::jam::Update::Ended) => self.set_jam(None),
+            JamOutcome::Pushed(crate::jam::Update::Changed(jam)) => {
+                // Updates can arrive out of order; an older one about the
+                // same Jam tells a story that is already past.
+                let stale = self
+                    .jam
+                    .as_ref()
+                    .is_some_and(|held| held.id == jam.id && jam.timestamp < held.timestamp);
+                if !stale {
+                    self.set_jam(Some(jam));
+                }
+            }
+            JamOutcome::Invite(Ok(invite)) => self.emit(Event::JamInvite(invite)),
+            JamOutcome::Link(uri) => self.emit(Event::OpenLink(uri)),
+            JamOutcome::Invite(Err(message)) | JamOutcome::Failed(message) => {
+                self.emit(Event::JamFailed(message));
+            }
+        }
+    }
+
+    fn set_jam(&mut self, jam: Option<crate::jam::Jam>) {
+        if self.jam != jam {
+            self.jam = jam.clone();
+            self.emit(Event::Jam(jam));
         }
     }
 
@@ -4016,6 +4289,26 @@ impl Worker {
             }
         });
     }
+}
+
+/// The address a short link leads to: where its redirect lands or,
+/// failing that, the Jam invitation its page names.
+async fn follow_short_link(client: &reqwest::Client, link: &str) -> Option<String> {
+    let response = client.get(link.trim()).send().await.ok()?;
+    let landed = response.url().to_string();
+    if crate::link::parse(&landed).is_some() && !crate::jam::is_short_link(&landed) {
+        return Some(landed);
+    }
+    let page = response.text().await.ok()?;
+    page.match_indices("open.spotify.com/socialsession/")
+        .find_map(|(at, _)| {
+            let address = &page[at..];
+            let end = address
+                .find(|c: char| !(c.is_ascii_alphanumeric() || "./".contains(c)))
+                .unwrap_or(address.len());
+            let address = format!("https://{}", &address[..end]);
+            crate::jam::token(&address).map(|_| address)
+        })
 }
 
 fn friendly_connect_error(error: &anyhow::Error) -> String {

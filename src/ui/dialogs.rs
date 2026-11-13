@@ -55,6 +55,39 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         }
                     });
                 }
+                Dialog::JoinJam(invite) => {
+                    theme::text(
+                        ui,
+                        if invite.host.is_empty() {
+                            gettext(locale, "Join this Jam?").into_owned()
+                        } else {
+                            gettext(locale, "Join {name}'s Jam?").replace("{name}", &invite.host)
+                        },
+                        theme::bold(20.0),
+                        palette.text,
+                    );
+                    ui.add_space(8.0);
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(gettext(
+                                locale,
+                                "You will listen along on this computer and can add songs to the queue.",
+                            ))
+                            .font(theme::regular(14.0))
+                            .color(palette.secondary),
+                        )
+                        .wrap(),
+                    );
+                    ui.add_space(20.0);
+                    buttons(ui, |ui| {
+                        if theme::pill_button(ui, &palette, &gettext(locale, "Join"), true).clicked() {
+                            app.actions.push(Action::JoinJam(invite.token.clone()));
+                        }
+                        if theme::pill_button(ui, &palette, &gettext(locale, "Cancel"), false).clicked() {
+                            app.actions.push(Action::CloseDialog);
+                        }
+                    });
+                }
                 Dialog::CreatePlaylist { .. } => create_playlist(app, ui),
                 Dialog::EditPlaylist { .. } => edit_playlist(app, ui),
                 Dialog::ConfirmDeletePlaylist { id, name, owned } => {

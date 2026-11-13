@@ -123,13 +123,10 @@ pub fn update(json: &str) -> Option<Update> {
     let value: Value = serde_json::from_str(json).ok()?;
     match value["reason"].as_str() {
         Some("SESSION_DELETED" | "YOU_LEFT" | "YOU_WERE_KICKED") => Some(Update::Ended),
-        _ => match value.get("session") {
-            Some(session) => Some(match parse(session) {
-                Some(jam) => Update::Changed(jam),
-                None => Update::Ended,
-            }),
-            None => None,
-        },
+        _ => value.get("session").map(|session| match parse(session) {
+            Some(jam) => Update::Changed(jam),
+            None => Update::Ended,
+        }),
     }
 }
 

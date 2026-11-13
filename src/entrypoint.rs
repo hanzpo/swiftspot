@@ -51,7 +51,7 @@ struct Cli {
     demo_page: Option<String>,
 
     /// Extra demo surfaces: a comma-separated list of `queue`, `playing-next`,
-    /// `devices`, `shortcuts`, `create`, `light`, `focus`, `personal-app`,
+    /// `devices`, `jam`, `jam-guest`, `jam-invite`, `shortcuts`, `create`, `light`, `focus`, `personal-app`,
     /// `windows-taskbar`, `lyrics`, `lyrics-fullscreen`, `collection-loading`,
     /// `shuffle-selected`, `shuffle-started`, `undated-mix`, `signed-out`, `connecting`, `library-list`,
     /// `library-list-narrow`, `library-list-wide`, `library-grid`, `library-grid-narrow`,

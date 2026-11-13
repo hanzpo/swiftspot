@@ -13,8 +13,8 @@ use crate::api::models::{
     Show, Track, TrackCount, User, UserRef, pick_image,
 };
 use crate::backend::{
-    ApiRequest, ApiResponse, AuthStatus, Backend, Command, Event, LocalPlayback, LyricsRequest,
-    PLAYLIST_PAGE_SIZE, PlaylistCacheRows, RecentsFor, RemoteAction, Waker,
+    ApiRequest, ApiResponse, AuthStatus, Backend, Command, Event, JamRequest, LocalPlayback,
+    LyricsRequest, PLAYLIST_PAGE_SIZE, PlaylistCacheRows, RecentsFor, RemoteAction, Waker,
 };
 use crate::i18n::{Locale, gettext, ngettext};
 use crate::model::QueueTab;
@@ -643,6 +643,10 @@ pub struct App {
     pub(crate) karaoke_fetching: bool,
     /// Why karaoke could not start, until it is tried again.
     pub(crate) karaoke_error: Option<String>,
+    /// The account's Jam, as Spotify last told it.
+    pub(crate) jam: Option<crate::jam::Jam>,
+    /// A Jam is being started or joined from here.
+    pub(crate) jam_busy: bool,
 }
 
 /// How many plays the Home shelf asks for: it shows sixteen cards.
@@ -1077,6 +1081,8 @@ impl App {
             karaoke,
             karaoke_fetching: false,
             karaoke_error: None,
+            jam: None,
+            jam_busy: false,
         };
         app.local.volume = app.settings.volume;
         // What was played here is on disk and needs nothing from the
@@ -2083,6 +2089,18 @@ impl App {
                 }
                 Event::Auth(status) => self.handle_auth(status),
                 Event::Playback(status) => self.handle_playback(status),
+                Event::Jam(jam) => self.receive_jam(jam),
+                Event::JamInvite(Some(invite)) => {
+                    self.dialog = Some(Dialog::JoinJam(invite));
+                }
+                Event::JamInvite(None) => {
+                    self.toast_error(gettext(self.locale, "This Jam has ended"));
+                }
+                Event::JamFailed(message) => {
+                    self.jam_busy = false;
+                    self.toast_error(message);
+                }
+                Event::OpenLink(uri) => self.actions.push(Action::OpenLink(uri)),
                 Event::Receivers(receivers) => self.receivers = receivers,
                 Event::ReceiverActivated { name, result } => {
                     self.activating_receiver = None;
@@ -4819,6 +4837,11 @@ impl App {
     }
 
     fn run_search(&mut self, query: String) {
+        if crate::jam::is_invitation(&query) {
+            self.search.query.clear();
+            self.actions.push(Action::OpenLink(query));
+            return;
+        }
         if !query.is_empty()
             && query == self.search.committed
             && !self.search.results.needs_load()
@@ -6775,6 +6798,11 @@ impl App {
         if self.user.is_none() {
             return;
         }
+        if crate::jam::is_invitation(&uri) {
+            self.pending_link = None;
+            self.backend.send(Command::Jam(JamRequest::Open(uri)));
+            return;
+        }
         if let Some(query) = crate::link::search_query(&uri) {
             self.pending_link = None;
             self.actions.push(Action::Search(query));
@@ -7734,6 +7762,15 @@ impl App {
     }
 
     fn toggle_play(&mut self) {
+        if self.jam_redirects() {
+            let command = if self.now_playing().is_some_and(|now| now.playing) {
+                crate::jam::Command::Pause
+            } else {
+                crate::jam::Command::Resume
+            };
+            self.backend.send(Command::Jam(JamRequest::Send(command)));
+            return;
+        }
         if self.queued_play.is_some() {
             self.drop_queued_play();
             return;
@@ -8330,6 +8367,13 @@ impl App {
         // Queue tracks and episodes directly on the active local engine.
         // Other targets and item types use the Web API.
         let track_like = uri.starts_with("spotify:track:") || uri.starts_with("spotify:episode:");
+        if track_like && self.jam_redirects() {
+            self.backend.send(Command::Jam(JamRequest::Send(
+                crate::jam::Command::AddToQueue(uri),
+            )));
+            self.queue_recheck_at = Some(Instant::now() + QUEUE_RECHECK);
+            return;
+        }
         if track_like && self.local.is_active() && matches!(self.target(), Target::Local) {
             self.backend.player(PlayerCommand::AddToQueue(uri));
             self.queue_recheck_at = Some(Instant::now() + QUEUE_RECHECK);
@@ -9018,6 +9062,10 @@ impl App {
             Action::Next if self.resume_only() => {
                 self.step_resume(true);
             }
+            Action::Next if self.jam_redirects() => {
+                self.backend
+                    .send(Command::Jam(JamRequest::Send(crate::jam::Command::Next)));
+            }
             Action::Next => {
                 self.resume_load = None;
                 // Move the queue head to the playing row immediately. Do not
@@ -9033,6 +9081,11 @@ impl App {
             }
             // Previous restarts after three seconds and otherwise steps back,
             // matching librespot.
+            Action::Previous if self.jam_redirects() => {
+                self.backend.send(Command::Jam(JamRequest::Send(
+                    crate::jam::Command::Previous,
+                )));
+            }
             Action::Previous if self.resume_only() => {
                 if self.resume_position_ms > RESTART_BEFORE_PREVIOUS {
                     self.resume_position_ms = 0;
@@ -9551,6 +9604,17 @@ impl App {
             Action::SaveQueueAsPlaylist => self.save_queue_as_playlist(),
             Action::SaveRadio(seed) => self.save_radio(&seed),
             Action::RefreshQueue => self.refresh_queue(true),
+            Action::StartJam => self.start_jam(),
+            Action::EndJam => self.backend.send(Command::Jam(JamRequest::End)),
+            Action::LeaveJam => self.backend.send(Command::Jam(JamRequest::Leave)),
+            Action::RemoveFromJam(member) => {
+                self.backend.send(Command::Jam(JamRequest::Remove(member)));
+            }
+            Action::JoinJam(token) => {
+                self.dialog = None;
+                self.jam_busy = true;
+                self.backend.send(Command::Jam(JamRequest::Join(token)));
+            }
             Action::CopyLink(uri) => {
                 if let Some(url) = util::open_spotify_url(&uri) {
                     ctx.copy_text(url);
@@ -10017,6 +10081,47 @@ impl App {
             public: public
                 .filter(|public| original.is_none_or(|playlist| playlist.public != Some(*public))),
         }
+    }
+
+    /// Whether Spotify asks this app's player commands to go through the
+    /// Jam it is a guest in, to the host's device.
+    pub(crate) fn jam_redirects(&self) -> bool {
+        self.jam
+            .as_ref()
+            .is_some_and(|jam| !jam.hosting && jam.redirects_commands)
+    }
+
+    /// Starts a Jam on the device playing now, or on this computer when
+    /// nothing is.
+    fn start_jam(&mut self) {
+        let device = match self.target() {
+            Target::Remote(Some(id)) => Some(id),
+            _ if self.local_ready => self.local_device_id.clone(),
+            _ => None,
+        };
+        let Some(device) = device else {
+            self.toast_error(gettext(
+                self.locale,
+                "Set up playback on this computer to start a Jam",
+            ));
+            return;
+        };
+        self.jam_busy = true;
+        self.backend
+            .send(Command::Jam(JamRequest::Start { device }));
+    }
+
+    fn receive_jam(&mut self, jam: Option<crate::jam::Jam>) {
+        let opened_here = std::mem::take(&mut self.jam_busy) && jam.is_some();
+        self.jam = jam;
+        if opened_here {
+            self.show_devices = false;
+            if !self.show_queue_panel {
+                self.actions.push(Action::ToggleQueuePanel);
+            }
+            self.queue_tab = QueueTab::Queue;
+        }
+        self.refresh_queue(true);
     }
 
     pub fn toast(&mut self, message: impl Into<String>) {
@@ -16050,6 +16155,151 @@ mod tests {
             !app.user_pages.contains_key("gone"),
             "no page, nothing kept"
         );
+        app.backend.shutdown();
+    }
+
+    fn jam(hosting: bool, redirects_commands: bool) -> crate::jam::Jam {
+        crate::jam::Jam {
+            id: "jam".into(),
+            token: "TOKEN".into(),
+            owner_id: "host".into(),
+            hosting,
+            members: vec![crate::jam::Member {
+                id: "host".into(),
+                name: "Ana".into(),
+                image: None,
+                you: hosting,
+            }],
+            host_device: Some("speaker".into()),
+            host_device_name: None,
+            redirects_commands,
+            timestamp: 1,
+            can_remove: hosting,
+        }
+    }
+
+    /// A Jam invitation, opened from outside or pasted into search, asks
+    /// who hosts it instead of opening a page or searching for the link.
+    #[test]
+    fn a_jam_invitation_asks_about_its_jam() {
+        let ctx = egui::Context::default();
+        let mut app = test_app("jam-invitation");
+        app.user = Some(User {
+            id: "me".into(),
+            ..User::default()
+        });
+        app.open_link(
+            crate::link::parse("https://open.spotify.com/socialsession/TOKEN?si=1").unwrap(),
+        );
+        app.apply_actions(&ctx);
+        assert_eq!(
+            app.backend.take_jam_requests(),
+            vec![JamRequest::Open("spotify:socialsession:TOKEN".into())]
+        );
+        assert_eq!(*app.page(), Page::Home);
+
+        let serial = app.search.serial;
+        app.apply(Action::Search("https://spotify.link/AbC123".into()), &ctx);
+        app.apply_actions(&ctx);
+        assert_eq!(app.search.serial, serial, "no search for a link");
+        assert_eq!(
+            app.backend.take_jam_requests(),
+            vec![JamRequest::Open("https://spotify.link/AbC123".into())]
+        );
+
+        app.handle_backend_events(vec![Event::JamInvite(Some(crate::jam::Invite {
+            token: "TOKEN".into(),
+            host: "Ana".into(),
+            people: 2,
+        }))]);
+        assert!(matches!(&app.dialog, Some(Dialog::JoinJam(invite)) if invite.host == "Ana"));
+        app.apply(Action::JoinJam("TOKEN".into()), &ctx);
+        assert!(app.dialog.is_none());
+        assert!(app.jam_busy);
+        assert_eq!(
+            app.backend.take_jam_requests(),
+            vec![JamRequest::Join("TOKEN".into())]
+        );
+        app.handle_backend_events(vec![Event::JamFailed(
+            "Couldn't join the Jam. Try again.".into(),
+        )]);
+        assert!(!app.jam_busy);
+        app.backend.shutdown();
+    }
+
+    /// A guest Spotify tells to send commands through the Jam sends its
+    /// controls and additions there, so they reach the host's speaker.
+    #[test]
+    fn a_guest_controls_the_jam_through_spotify() {
+        let ctx = egui::Context::default();
+        let mut app = test_app("jam-guest");
+        app.jam = Some(jam(false, true));
+        app.apply(Action::Next, &ctx);
+        app.apply(Action::Previous, &ctx);
+        app.apply(Action::TogglePlay, &ctx);
+        app.apply(
+            Action::QueueMany {
+                songs: vec![("spotify:track:t1".into(), "Song".into())],
+            },
+            &ctx,
+        );
+        assert_eq!(
+            app.backend.take_jam_requests(),
+            vec![
+                JamRequest::Send(crate::jam::Command::Next),
+                JamRequest::Send(crate::jam::Command::Previous),
+                JamRequest::Send(crate::jam::Command::Resume),
+                JamRequest::Send(crate::jam::Command::AddToQueue("spotify:track:t1".into())),
+            ]
+        );
+        assert!(app.backend.take_queued_tracks().is_empty());
+        assert!(app.backend.take_queue_requests().is_empty());
+
+        app.jam = Some(jam(true, true));
+        app.apply(Action::Next, &ctx);
+        assert!(
+            app.backend.take_jam_requests().is_empty(),
+            "the host plays the Jam itself"
+        );
+        app.backend.shutdown();
+    }
+
+    /// Starting a Jam needs a device to play it; the Jam it starts opens
+    /// the queue, where its people and invitation are.
+    #[test]
+    fn a_jam_started_here_opens_the_queue() {
+        let ctx = egui::Context::default();
+        let mut app = test_app("jam-start");
+        app.apply(Action::StartJam, &ctx);
+        assert!(app.backend.take_jam_requests().is_empty());
+        assert!(!app.jam_busy);
+
+        app.local_ready = true;
+        app.local_device_id = Some("this-computer".into());
+        app.apply(Action::StartJam, &ctx);
+        assert_eq!(
+            app.backend.take_jam_requests(),
+            vec![JamRequest::Start {
+                device: "this-computer".into()
+            }]
+        );
+        assert!(app.jam_busy);
+        app.show_queue_panel = false;
+        app.handle_backend_events(vec![Event::Jam(Some(jam(true, false)))]);
+        app.apply_actions(&ctx);
+        assert!(!app.jam_busy);
+        assert!(app.show_queue_panel);
+        assert_eq!(app.queue_tab, QueueTab::Queue);
+
+        app.show_queue_panel = false;
+        app.handle_backend_events(vec![Event::Jam(Some(jam(true, false)))]);
+        app.apply_actions(&ctx);
+        assert!(!app.show_queue_panel, "an update elsewhere opens nothing");
+
+        app.apply(Action::EndJam, &ctx);
+        assert_eq!(app.backend.take_jam_requests(), vec![JamRequest::End]);
+        app.handle_backend_events(vec![Event::Jam(None)]);
+        assert!(app.jam.is_none());
         app.backend.shutdown();
     }
 

@@ -874,6 +874,39 @@ pub fn apply_flags(app: &mut App, page: Option<&str>, show: Option<&str>) {
                 }
             }
             "devices" => app.show_devices = true,
+            "jam" | "jam-guest" => {
+                app.show_queue_panel = true;
+                let hosting = surface == "jam";
+                let member = |id: &str, name: &str, you: bool| crate::jam::Member {
+                    id: id.into(),
+                    name: name.into(),
+                    image: None,
+                    you,
+                };
+                app.jam = Some(crate::jam::Jam {
+                    id: "demo-jam".into(),
+                    token: "demojam".into(),
+                    owner_id: "host".into(),
+                    hosting,
+                    members: vec![
+                        member("host", "Hanz", hosting),
+                        member("guest", "Irene", !hosting),
+                        member("third", "Kasia", false),
+                    ],
+                    host_device: app.local_device_id.clone(),
+                    host_device_name: Some("SwiftSpot".into()),
+                    redirects_commands: !hosting,
+                    timestamp: 1,
+                    can_remove: hosting,
+                });
+            }
+            "jam-invite" => {
+                app.dialog = Some(Dialog::JoinJam(crate::jam::Invite {
+                    token: "demojam".into(),
+                    host: "Irene".into(),
+                    people: 3,
+                }));
+            }
             // These paired states capture both outcomes of the collection
             // Shuffle click for the PR visual comparison.
             "shuffle-selected" => {

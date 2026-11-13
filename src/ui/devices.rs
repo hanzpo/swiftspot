@@ -164,6 +164,73 @@ fn receiver_row(app: &mut App, ui: &mut egui::Ui, receiver: &crate::zeroconf::Re
     }
 }
 
+/// Starts a Jam on the device playing now, or, in one, shows it.
+fn jam_row(app: &mut App, ui: &mut egui::Ui) {
+    if !app.local_ready && app.jam.is_none() {
+        return;
+    }
+    let palette = app.palette;
+    let locale = app.locale;
+    ui.add_space(4.0);
+    ui.painter().hline(
+        ui.available_rect_before_wrap().x_range().shrink(6.0),
+        ui.cursor().top(),
+        egui::Stroke::new(1.0, palette.outline),
+    );
+    ui.add_space(4.0);
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
+    if response.hovered() && !app.jam_busy {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(6), palette.surface_hover);
+    }
+    let icon_rect = Rect::from_center_size(
+        pos2(rect.left() + 24.0, rect.center().y),
+        egui::Vec2::splat(20.0),
+    );
+    Icon::Users
+        .image(palette.text, 20.0)
+        .paint_at(ui, icon_rect);
+    let label = match &app.jam {
+        Some(jam) => crate::i18n::ngettext(
+            locale,
+            "In a Jam with {count} person",
+            "In a Jam with {count} people",
+            jam.members.len() as u32,
+        )
+        .replace("{count}", &jam.members.len().to_string()),
+        None => gettext(locale, "Start a Jam").into_owned(),
+    };
+    ui.painter().with_clip_rect(rect).text(
+        pos2(rect.left() + 48.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        theme::medium(14.0),
+        palette.text,
+    );
+    if app.jam_busy {
+        let mut spin = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(Rect::from_center_size(
+                    pos2(rect.right() - 18.0, rect.center().y),
+                    egui::Vec2::splat(20.0),
+                ))
+                .layout(Layout::centered_and_justified(egui::Direction::LeftToRight)),
+        );
+        theme::spinner(&mut spin, 16.0, palette.accent);
+    } else if response.clicked() {
+        if app.jam.is_some() {
+            app.show_devices = false;
+            if !app.show_queue_panel {
+                app.actions.push(Action::ToggleQueuePanel);
+            }
+            app.actions
+                .push(Action::SetQueueTab(crate::model::QueueTab::Queue));
+        } else {
+            app.actions.push(Action::StartJam);
+        }
+    }
+}
+
 pub fn popup(app: &mut App, ctx: &egui::Context) {
     if !app.show_devices {
         return;
@@ -354,6 +421,7 @@ pub fn popup(app: &mut App, ctx: &egui::Context) {
                         }
                     },
                 );
+                jam_row(app, ui);
             });
         });
     let popup_rect = area.response.rect;

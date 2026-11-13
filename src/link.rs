@@ -32,8 +32,16 @@ pub fn canonical_context_uri(uri: &str) -> String {
 /// Accepted: `spotify:track:ID`, the old `spotify:user:NAME:playlist:ID`,
 /// `spotify://track/ID`, and `https://open.spotify.com/track/ID` with or
 /// without a locale segment (`/intl-de/`), a query string, or the old
-/// `/user/NAME/playlist/ID` shape.
+/// `/user/NAME/playlist/ID` shape. A Jam invitation comes back as
+/// `spotify:socialsession:TOKEN`, and a short `https://spotify.link/` link
+/// as itself, to be followed before it can be opened.
 pub fn parse(text: &str) -> Option<String> {
+    if let Some(token) = crate::jam::token(text) {
+        return Some(format!("spotify:socialsession:{token}"));
+    }
+    if crate::jam::is_short_link(text) {
+        return Some(text.trim().to_string());
+    }
     if let Some(query) = search_query(text) {
         return Some(format!(
             "spotify:search:{}",
@@ -241,6 +249,25 @@ mod tests {
         }
         let long = format!("spotify:track:{}", "x".repeat(65));
         assert_eq!(parse(&long), None);
+    }
+
+    #[test]
+    fn jam_invitations_are_kept_for_joining() {
+        for link in [
+            "https://open.spotify.com/socialsession/4nQzpzVCLVuRdOCKpGK649?si=1",
+            "spotify://socialsession/4nQzpzVCLVuRdOCKpGK649",
+            "spotify:socialsession:4nQzpzVCLVuRdOCKpGK649",
+        ] {
+            assert_eq!(
+                parse(link).as_deref(),
+                Some("spotify:socialsession:4nQzpzVCLVuRdOCKpGK649"),
+                "{link}"
+            );
+        }
+        assert_eq!(
+            parse(" https://spotify.link/AbC123 ").as_deref(),
+            Some("https://spotify.link/AbC123")
+        );
     }
 
     #[test]

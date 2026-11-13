@@ -186,6 +186,105 @@ fn queue_drop(ui: &egui::Ui, rect: egui::Rect) -> Option<Arc<DragTrack>> {
     }
 }
 
+/// The Jam the account is in: who is in it, the invitation, and the way
+/// out. Its songs are the queue below.
+fn jam_section(app: &mut App, ui: &mut egui::Ui) {
+    let Some(jam) = app.jam.clone() else {
+        return;
+    };
+    let palette = app.palette;
+    let locale = app.locale;
+    ui.horizontal(|ui| {
+        theme::text(ui, gettext(locale, "Jam"), theme::bold(16.0), palette.text);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let (icon, tooltip, action) = if jam.hosting {
+                (Icon::LogOut, gettext(locale, "End Jam"), Action::EndJam)
+            } else {
+                (Icon::LogOut, gettext(locale, "Leave Jam"), Action::LeaveJam)
+            };
+            if theme::icon_button(ui, icon, 16.0, palette.secondary, palette.text, &tooltip)
+                .clicked()
+            {
+                app.actions.push(action);
+            }
+            if !jam.token.is_empty()
+                && theme::icon_button(
+                    ui,
+                    Icon::Copy,
+                    16.0,
+                    palette.secondary,
+                    palette.text,
+                    &gettext(locale, "Copy invite link"),
+                )
+                .clicked()
+            {
+                app.actions.push(Action::CopyLink(jam.invite_uri()));
+            }
+        });
+    });
+    ui.add_space(6.0);
+    for member in &jam.members {
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 36.0), egui::Sense::click());
+        let avatar = egui::Rect::from_center_size(
+            egui::pos2(rect.left() + 14.0, rect.center().y),
+            egui::Vec2::splat(28.0),
+        );
+        widgets::paint_cover(
+            ui,
+            &palette,
+            member.image.as_deref(),
+            avatar,
+            14.0,
+            Icon::User,
+            None,
+        );
+        let painter = ui.painter().with_clip_rect(rect);
+        let name = if member.you {
+            gettext(locale, "{name} (you)").replace("{name}", &member.name)
+        } else {
+            member.name.clone()
+        };
+        let role = (member.id == jam.owner_id).then(|| gettext(locale, "Host"));
+        let right = rect.right() - if role.is_some() { 48.0 } else { 4.0 };
+        crate::bidi::paint_line(
+            &painter,
+            rect.left() + 38.0,
+            right,
+            rect.center().y,
+            &name,
+            theme::medium(14.0),
+            palette.text,
+        );
+        if let Some(role) = role {
+            painter.text(
+                egui::pos2(rect.right() - 4.0, rect.center().y),
+                egui::Align2::RIGHT_CENTER,
+                role,
+                theme::regular(12.0),
+                palette.secondary,
+            );
+        }
+        if jam.hosting && jam.can_remove && !member.you && member.id != jam.owner_id {
+            egui::Popup::context_menu(&response)
+                .id(ui.make_persistent_id(("jam-member-menu", &member.id)))
+                .frame(widgets::menu_frame(&palette))
+                .show(|ui| {
+                    if widgets::menu_item(
+                        ui,
+                        &palette,
+                        Some(Icon::X),
+                        &gettext(locale, "Remove from Jam"),
+                    ) {
+                        app.actions.push(Action::RemoveFromJam(member.id.clone()));
+                        ui.close();
+                    }
+                });
+        }
+    }
+    ui.add_space(SECTION_GAP);
+}
+
 /// Space below the now-playing row and below Playing next, before the next
 /// section's heading.
 const SECTION_GAP: f32 = 14.0;
@@ -205,6 +304,7 @@ fn contents(app: &mut App, ui: &mut egui::Ui, compact: bool) {
                 .collect(),
         });
     }
+    jam_section(app, ui);
     match &app.queue {
         Loadable::Loaded(_) => {}
         Loadable::Loading | Loadable::NotLoaded => {

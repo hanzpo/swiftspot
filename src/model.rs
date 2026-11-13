@@ -998,6 +998,8 @@ pub enum Dialog {
     PremiumNeeded,
     /// Introduce personal Spotify apps to eligible listeners once.
     PersonalAppIntro,
+    /// Ask before joining the Jam an opened invitation leads to.
+    JoinJam(crate::jam::Invite),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1160,6 +1162,16 @@ pub enum Action {
     SaveRadio(String),
     RefreshQueue,
     CopyLink(String),
+    /// Start a Jam on the device playing now.
+    StartJam,
+    /// End the Jam this account hosts, for everyone.
+    EndJam,
+    /// Leave someone else's Jam.
+    LeaveJam,
+    /// Remove someone, by member id, from the Jam this account hosts.
+    RemoveFromJam(String),
+    /// Join the Jam behind a join token.
+    JoinJam(String),
     /// Copy picked songs' links, one per line, and remember the songs so a
     /// paste of the same links can show their rows at once.
     CopySongs(Vec<PlayableItem>),

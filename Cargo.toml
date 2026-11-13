@@ -114,6 +114,9 @@ http = "1"
 # The body librespot's HTTP client takes, for pathfinder requests; already
 # in the tree through hyper.
 bytes = "1"
+# Reads the Jam updates librespot's dealer hands out as a stream; already in
+# the tree through librespot.
+futures-util = { version = "0.3", default-features = false }
 # Reading pathfinder's current query hashes from the desktop app's zip
 # archive (`xpui.spa`) and the scripts in it; both already in the tree.
 miniz_oxide = "0.8"

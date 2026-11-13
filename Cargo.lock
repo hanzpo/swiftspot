@@ -5747,6 +5747,7 @@ dependencies = [
  "fastframe-text",
  "fastframe-theme",
  "fastframe-tray",
+ "futures-util",
  "half",
  "hmac 0.12.1",
  "http",

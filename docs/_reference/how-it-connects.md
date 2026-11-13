@@ -407,6 +407,40 @@ names a different account, playback on this computer stops and asks to be
 enabled again. The socket's `pathfinder.query` method sends
 any of the known queries and returns Spotify's answer as it is.
 
+## Jam
+
+A Jam goes through `social-connect`, the service Spotify's own apps use for
+it, on the streaming session's client endpoint with the session's own
+token, so it draws on no Web API app's quota. The requests are the desktop
+app's:
+
+- `GET /social-connect/v2/sessions/current` reads the account's Jam when the
+  engine connects.
+- `GET /social-connect/v2/sessions/current_or_new?activate=true&local_device_id=…`
+  starts one on the device playing now.
+- `DELETE /social-connect/v3/sessions/{id}` ends it, and
+  `POST /social-connect/v3/sessions/{id}/leave` leaves someone else's.
+- `POST /social-connect/v3/sessions/{id}/member/{member}/kick` removes
+  someone.
+- `GET /social-connect/v2/sessions/info/{token}` names the host of an opened
+  invitation, and `POST /social-connect/v3/sessions/join` joins it to listen
+  on this computer, as the desktop app joins from a link.
+- When Spotify marks a guest's session `redirect_commands`, Next, Previous,
+  Play, Pause and Add to queue go to
+  `POST /social-connect/v2/sessions/{id}/commands/from/{device}`, which hands
+  them to the host's device.
+
+After that the engine follows the Jam through the
+`social-connect/v2/session_update` messages Spotify pushes over the
+session's dealer connection; there is no polling. A Jam belongs to the
+account, so one started on a phone with this computer as its speaker shows
+too. Songs guests add reach the player through Spotify Connect like any
+other queue command.
+
+A short invite link (`spotify.link/…`) is followed once, with the app's HTTP
+client and proxy settings, to find the invitation it leads to. A short link
+to anything else opens like any other Spotify link.
+
 ## Proxy
 
 Since 0.9.0, Settings → Proxy has four modes:

@@ -35,8 +35,9 @@ to delete. **Sign out** in Settings removes the stored credentials.
 
 SwiftSpot connects only to the services below.
 
-- **Spotify.** Sign-in, your library, search, playlists, playback and Spotify
-  Connect all go to Spotify, under your account. Spotify's own
+- **Spotify.** Sign-in, your library, search, playlists, playback, Spotify
+  Connect and Jam all go to Spotify, under your account. People in a Jam
+  with you see your Spotify name and picture, as in Spotify's own apps. Spotify's own
   [privacy policy](https://www.spotify.com/legal/privacy-policy/) applies to
   that data.
 - **LRCLIB.** When the lyrics panel is open and Spotify has no lyrics for the

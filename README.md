@@ -25,7 +25,7 @@ engine anywhere: the whole thing runs in about 140 MB.
   Added, Top Songs, albums, artists, podcasts and saved episodes.
 - **The queue:** Playing Next, which you can reorder and remove songs from,
   and History.
-- **Everything else:** Spotify Connect devices, a mini player, a sleep
+- **Everything else:** Spotify Connect devices, Jam, a mini player, a sleep
   timer, a ten-band equalizer, and Apple Music's keyboard shortcuts.
 
 ![A playlist with the lyrics panel and karaoke on](screenshots/playlist-lyrics.png)

@@ -76,6 +76,10 @@ clients. SwiftSpot uses its session for:
   by a song, playlist, album, or artist. Each resolution is a fresh mix of 50
   songs, so a radio page plays the songs it shows rather than asking again.
 - **Audiobook detection** for saved shows, which the Web API lists as podcasts.
+- **Jam:** starting a Jam on a device, the people in it and its invite link,
+  removing someone, ending it, and joining someone else's from a link.
+  These go to the `social-connect` service Spotify's own apps use; see
+  [How It Connects](/how-it-connects/#jam).
 
 ## librespot playback
 
@@ -103,7 +107,7 @@ The Web API and librespot do not provide these features:
   support its protocol. SwiftSpot's pins are local and are stored in
   `settings.json`. See [issue #31](https://github.com/crmne/spotifast/issues/31).
 - **Editing playlist folders.** librespot can only read them.
-- **Smart Shuffle, Jam, Blend, and similar Spotify features.** Spotify
+- **Smart Shuffle, Blend, and similar Spotify features.** Spotify
   generates these for its own clients. SwiftSpot only has plain shuffle.
   A Blend that a Spotify app already made opens like any playlist, with
   who added each song, but SwiftSpot cannot start or manage one.

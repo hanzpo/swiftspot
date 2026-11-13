@@ -410,6 +410,23 @@ On Windows, the main window's minimize, maximize, and close buttons share the
 top bar with SwiftSpot's controls. Drag an empty part of that bar to move or
 snap the window, and drag a window edge or corner to resize it.
 
+## Jam
+
+A Jam is a queue friends share. Choose **Start a Jam** at the bottom of the
+device list. The Jam plays on the device that is playing now, or on this
+computer when nothing plays. The queue then shows who is in the Jam. Copy
+the invite link from there and send it to friends: they open it in Spotify
+and add songs to the same queue. The host can remove someone from the menu
+on their name, and **End** stops the Jam for everyone.
+
+A Jam started on your phone with this computer as the speaker shows in the
+queue too.
+
+To join a friend's Jam, paste their invite link into Search, or open it with
+SwiftSpot. SwiftSpot asks first, then plays the Jam on this computer.
+Songs you add and Next, Previous, Play and Pause go to the Jam. **Leave**
+in the queue takes you out.
+
 ## Radio
 
 Since 0.10.0, **Go to song radio** in a song's menu opens a page

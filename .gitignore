@@ -13,3 +13,6 @@ docs/.bundle/
 /.cache/
 
 /dist/
+scripts/bench/playkey
+scripts/bench/playing
+scripts/bench/results.jsonl

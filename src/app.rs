@@ -4589,6 +4589,30 @@ impl App {
         }
     }
 
+    /// The cover URLs a playlist shows before an upload, to tell its new
+    /// picture from the old one once Spotify answers.
+    pub(crate) fn cover_urls_before_upload(&self, id: &str) -> Vec<String> {
+        self.uploaded_covers
+            .get(id)
+            .map(|pending| pending.previous_urls.clone())
+            .unwrap_or_else(|| {
+                self.playlist_pages
+                    .get(id)
+                    .and_then(|page| page.playlist.get())
+                    .into_iter()
+                    .chain(
+                        self.library
+                            .playlists
+                            .get()
+                            .into_iter()
+                            .flatten()
+                            .filter(|playlist| playlist.id == id),
+                    )
+                    .flat_map(|playlist| playlist.images.iter().map(|image| image.url.clone()))
+                    .collect()
+            })
+    }
+
     fn set_playlist_cover(&mut self, id: &str, cover: &crate::playlist_cover::Cover) {
         if let Some(page) = self.playlist_pages.get_mut(id)
             && let Some(playlist) = page.playlist.get_mut()
@@ -9127,28 +9151,7 @@ impl App {
                 if self.cover_uploads.contains_key(&id) {
                     return;
                 }
-                let previous_urls = self
-                    .uploaded_covers
-                    .get(&id)
-                    .map(|pending| pending.previous_urls.clone())
-                    .unwrap_or_else(|| {
-                        self.playlist_pages
-                            .get(&id)
-                            .and_then(|page| page.playlist.get())
-                            .into_iter()
-                            .chain(
-                                self.library
-                                    .playlists
-                                    .get()
-                                    .into_iter()
-                                    .flatten()
-                                    .filter(|playlist| playlist.id == id),
-                            )
-                            .flat_map(|playlist| {
-                                playlist.images.iter().map(|image| image.url.clone())
-                            })
-                            .collect()
-                    });
+                let previous_urls = self.cover_urls_before_upload(&id);
                 if let Some(Dialog::EditPlaylist {
                     id: current, cover, ..
                 }) = &mut self.dialog

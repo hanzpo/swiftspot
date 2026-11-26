@@ -1413,34 +1413,22 @@ impl App {
             "playlist.cover" => {
                 let id = param_str(params, "id")?.to_string();
                 let path = std::path::PathBuf::from(param_str(params, "path")?);
-                let size = std::fs::metadata(&path)
-                    .map_err(|error| format!("Couldn't read the image: {error}"))?
-                    .len();
-                if size > 20 * 1024 * 1024 {
-                    return Err("The image is too large.".into());
+                if self.cover_uploads.contains_key(&id) {
+                    return Err("A cover is already uploading.".into());
                 }
-                let bytes = std::fs::read(&path)
-                    .map_err(|error| format!("Couldn't read the image: {error}"))?;
-                let cover = crate::playlist_cover::prepare(&bytes)?;
-                let playlist = self
-                    .library
-                    .playlists
-                    .get()
-                    .and_then(|list| list.iter().find(|playlist| playlist.id == id))
-                    .cloned()
-                    .unwrap_or_default();
-                // The upload runs as the window's edit sheet runs it.
-                self.dialog = Some(crate::model::Dialog::EditPlaylist {
-                    cover: crate::playlist_cover::Draft {
-                        selection: Some(cover),
-                        ..Default::default()
-                    },
-                    id: id.clone(),
-                    name: playlist.name,
-                    description: playlist.description.unwrap_or_default(),
-                    public: playlist.public,
-                });
-                self.actions.push(Action::UploadPlaylistCover(id));
+                self.cover_request = self.cover_request.wrapping_add(1);
+                let request = self.cover_request;
+                self.cover_uploads.insert(id.clone(), request);
+                let previous_urls = self.cover_urls_before_upload(&id);
+                // The picture is read and prepared on the runtime, then
+                // uploaded; a 20 MB file never holds up this thread.
+                self.backend
+                    .send(crate::backend::Command::PreparePlaylistCover {
+                        id,
+                        request,
+                        previous_urls,
+                        path,
+                    });
                 ok()
             }
             "radio.save" => {
@@ -1731,7 +1719,11 @@ impl App {
         // The account's own order, with its folders.
         let rows = self.library.playlists.get().map(|list| {
             use crate::player::RootlistEntry;
-            let find = |uri: &str| list.iter().find(|playlist| playlist.uri == uri);
+            let by_uri: std::collections::HashMap<&str, &crate::api::models::Playlist> = list
+                .iter()
+                .map(|playlist| (playlist.uri.as_str(), playlist))
+                .collect();
+            let find = |uri: &str| by_uri.get(uri).copied();
             let mut stack: Vec<(Value, Vec<Value>)> = Vec::new();
             let mut top: Vec<Value> = Vec::new();
             let mut listed = std::collections::HashSet::new();

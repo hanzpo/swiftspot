@@ -994,6 +994,15 @@ impl App {
             .connect(waker.clone())
     }
 
+    /// The API's server, for front ends that connect from elsewhere
+    /// (`crate::socket`).
+    #[cfg(unix)]
+    pub fn api_server(&mut self) -> crate::server::Server {
+        self.api
+            .get_or_insert_with(crate::server::Server::default)
+            .clone()
+    }
+
     // ---- derived state -----------------------------------------------------
 
     pub fn page(&self) -> &Page {
@@ -10650,6 +10659,48 @@ mod engine_tests {
             event["event"] == "page" && event["data"]["page"] == "devices"
         });
         assert!(saw_page, "expected a pushed page event for devices");
+
+        app.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn image_get_fetches_only_web_links() {
+        let dir = std::env::temp_dir().join(format!("ss-img-{:08x}", rand::random::<u32>()));
+        let dirs = AppDirs {
+            config: dir.join("config"),
+            state: dir.join("state"),
+            cache: dir.join("cache"),
+        };
+        let _ = dirs.ensure();
+        let waker = Waker::default();
+        let mut app = App::new(
+            &waker,
+            dirs,
+            Settings::default(),
+            AppOptions {
+                media_controls: false,
+                restore_sign_in: false,
+                tray: false,
+            },
+        );
+        app.auth = AuthStatus::SignedOut;
+        let (inbox, messages) = app.connect_front_end(&waker);
+        app.engine_step(&waker);
+        while messages.try_recv().is_ok() {}
+
+        inbox.submit(br#"{"id":1,"method":"image.get","params":{"url":"file:///etc/hosts"}}"#);
+        inbox.submit(br#"{"id":2,"method":"image.get"}"#);
+        app.engine_step(&waker);
+        let replies: Vec<serde_json::Value> = messages
+            .try_iter()
+            .map(|line| serde_json::from_str::<serde_json::Value>(&line).unwrap())
+            .filter(|line| line.get("id").is_some())
+            .collect();
+        assert_eq!(replies.len(), 2);
+        assert_eq!(replies[0]["error"], "not an image link");
+        assert_eq!(replies[1]["error"], "give \"url\"");
 
         app.shutdown();
         let _ = std::fs::remove_dir_all(&dir);

@@ -29,6 +29,7 @@ unsafe impl Send for Context {}
 
 /// The running engine, as the app holds it.
 pub struct Engine {
+    socket: Option<crate::socket::Listener>,
     inbox: Option<Inbox>,
     waker: Waker,
     stop: Arc<AtomicBool>,
@@ -58,6 +59,7 @@ impl Engine {
         // SWIFTSPOT_DATA keeps a test run's files, and its sign-in, apart
         // from the person's own, and leaves the media keys to their app.
         let isolated = std::env::var_os("SWIFTSPOT_DATA").map(std::path::PathBuf::from);
+        let socket_path = crate::socket::path(isolated.as_deref());
         let options = match isolated {
             Some(_) => AppOptions {
                 restore_sign_in: false,
@@ -90,7 +92,7 @@ impl Engine {
                         settings.device_name = "SwiftSpot".to_string();
                     }
                     let mut app = App::new(&waker, dirs, settings, options);
-                    let _ = ready_tx.send(app.connect_front_end(&waker));
+                    let _ = ready_tx.send((app.connect_front_end(&waker), app.api_server()));
                     while !stop.load(Ordering::Acquire) && !app.quit_requested {
                         let wait = app.engine_step(&waker);
                         if stop.load(Ordering::Acquire) || app.quit_requested {
@@ -101,9 +103,12 @@ impl Engine {
                     app.shutdown();
                 })?
         };
-        let (inbox, messages) = ready_rx
+        let ((inbox, messages), server) = ready_rx
             .recv()
             .map_err(|_| std::io::Error::other("the engine stopped while starting"))?;
+        let socket = crate::socket::Listener::start(socket_path, server, waker.clone())
+            .inspect_err(|error| log::warn!("not serving the API socket: {error}"))
+            .ok();
         let delivery = std::thread::Builder::new()
             .name("swiftspot-delivery".into())
             .spawn(move || {
@@ -114,6 +119,7 @@ impl Engine {
                 deliver(context.0, std::ptr::null(), 0);
             })?;
         Ok(Self {
+            socket,
             inbox: Some(inbox),
             waker,
             stop,
@@ -123,6 +129,7 @@ impl Engine {
     }
 
     fn stop(&mut self) {
+        self.socket = None;
         self.stop.store(true, Ordering::Release);
         self.waker.wake();
         if let Some(engine) = self.engine.take() {

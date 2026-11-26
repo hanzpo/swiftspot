@@ -430,6 +430,20 @@ impl App {
                 });
                 continue;
             }
+            // A cover's bytes, for front ends that draw it themselves.
+            if request.method == "image.get" {
+                let reply = server.later(&request);
+                match request.params.get("url").and_then(Value::as_str) {
+                    Some(url) => self.backend.art().fetch_then(url.to_string(), move |result| {
+                        use base64::Engine as _;
+                        reply(result.map(|bytes| {
+                            json!({ "data": base64::engine::general_purpose::STANDARD.encode(bytes) })
+                        }));
+                    }),
+                    None => reply(Err("give \"url\"".into())),
+                }
+                continue;
+            }
             let mut result = self.answer(&request);
             if let Ok(value) = &mut result {
                 skip_known_rows(value, &request.params);

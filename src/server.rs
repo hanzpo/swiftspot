@@ -46,7 +46,7 @@ struct Shared {
 }
 
 /// What the front ends asked for, and where their answers go.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Server {
     shared: Arc<Mutex<Shared>>,
 }

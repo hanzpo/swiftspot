@@ -37,6 +37,8 @@ pub mod session_reads;
 pub mod settings;
 pub mod single_instance;
 pub mod sink;
+#[cfg(unix)]
+pub mod socket;
 pub mod util;
 pub mod words;
 pub mod zeroconf;

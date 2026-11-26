@@ -51,6 +51,23 @@ impl ArtLoader {
         self.inner.fetch(url).await
     }
 
+    /// Fetches `url` like [`Self::fetch`] on the loader's runtime and hands
+    /// the result to `done`, for an answer that waits on the network.
+    pub fn fetch_then(
+        &self,
+        url: String,
+        done: impl FnOnce(Result<Arc<[u8]>, String>) + Send + 'static,
+    ) {
+        if !is_http(&url) {
+            done(Err("not an image link".to_string()));
+            return;
+        }
+        let inner = Arc::clone(&self.inner);
+        self.inner
+            .runtime
+            .spawn(async move { done(inner.fetch(&url).await) });
+    }
+
     /// Whether artwork has finished loading from disk or the network.
     pub fn is_ready(&self, url: &str) -> bool {
         matches!(

@@ -54,6 +54,7 @@ Jam invitation waiting for an answer, or a Jam being started changes.
 | `playlist.get` | `id` | `playlist`, `tracks`, `total`, `more` |
 | `album.get` | `id` | `album`, `tracks`, `more` |
 | `page.more` | `page`, e.g. `playlist:ID`, `liked` | |
+| `image.get` | `url` (a cover's web link) | `data`: the image file, base64 |
 
 `auth` is `starting`, `signed_out`, `waiting_for_browser`, `connecting`,
 `connected`, `failed` or `refused`. A refusal's `sign_in_problem` is
@@ -80,5 +81,11 @@ them. When the list still starts with those rows, the answer carries only
 the rows past them and `"from": from`; otherwise it carries the whole list
 and `"from": 0`. The app asks this way while a long list loads, so each new
 page of rows costs only its own rows.
+The same API is served on a local socket (`src/socket.rs`) for front ends
+in other processes, such as the `swiftspot` terminal client: one JSON object
+per line each way. The socket is `swiftspot-api/api.sock` in the user's
+temporary folder, or `api.sock` in the `SWIFTSPOT_DATA` folder, and only its
+user can open it.
+
 The handlers are in `src/app/api.rs`: each reads SwiftSpot's state or queues
 the same action its window would, so the app gets the old window's behaviour.

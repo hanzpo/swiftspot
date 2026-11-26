@@ -558,8 +558,7 @@ impl State {
                 let page = data["page"].as_str().unwrap_or_default();
                 if page == "playlists" {
                     self.ask(client, "library.playlists", json!({}), Pending::Playlists);
-                } else if page == self.view.target.page() || self.view.page.as_deref() == Some(page)
-                {
+                } else if self.follows(page) {
                     self.load(client);
                 }
             }
@@ -569,6 +568,14 @@ impl State {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn follows(&self, page: &str) -> bool {
+        let ours = page == self.view.target.page() || self.view.page.as_deref() == Some(page);
+        match self.view.target {
+            Target::Search(_) => ours && self.view.loading,
+            _ => ours,
         }
     }
 
@@ -959,6 +966,22 @@ mod tests {
         let titles: Vec<&str> = view.rows.iter().map(|row| row.title.as_str()).collect();
         assert_eq!(titles, ["Songs", "a", "Albums", "B"]);
         assert_eq!(view.rows[3].action, Action::Open(Target::Album("b".into())));
+    }
+
+    #[test]
+    fn a_finished_search_ignores_other_searches() {
+        let mut state = State::new(false);
+        state.view = View::new(Target::Search("q".into()));
+        assert!(state.follows("search"));
+        state
+            .view
+            .fill(&json!({ "loading": false, "tracks": [song("a")] }));
+        assert!(!state.follows("search"));
+        state.view = View::new(Target::Liked);
+        state
+            .view
+            .fill(&json!({ "loading": false, "page": "liked" }));
+        assert!(state.follows("liked"));
     }
 
     #[test]

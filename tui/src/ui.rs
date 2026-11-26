@@ -14,8 +14,11 @@ const ACCENT: Color = Color::Green;
 pub fn draw(frame: &mut Frame, state: &State) -> Option<Rect> {
     let [body, bar] =
         Layout::vertical([Constraint::Min(3), Constraint::Length(6)]).areas(frame.area());
-    let [side, main] =
-        Layout::horizontal([Constraint::Length(28), Constraint::Min(20)]).areas(body);
+    let [side, main] = Layout::horizontal([
+        Constraint::Length(side_width(body.width)),
+        Constraint::Min(20),
+    ])
+    .areas(body);
     draw_side(frame, state, side);
     if state.show_lyrics {
         draw_lyrics(frame, state, main);
@@ -27,6 +30,10 @@ pub fn draw(frame: &mut Frame, state: &State) -> Option<Rect> {
         draw_help(frame, body);
     }
     art
+}
+
+fn side_width(total: u16) -> u16 {
+    if total < 100 { 22 } else { 28 }
 }
 
 fn panel(title: String, focused: bool) -> Block<'static> {
@@ -104,6 +111,7 @@ fn draw_main(frame: &mut Frame, state: &State, area: Rect) {
         frame.render_widget(text, area);
         return;
     }
+    let wide = area.width >= 80;
     let rows: Vec<Row> = view
         .rows
         .iter()
@@ -123,29 +131,38 @@ fn draw_main(frame: &mut Frame, state: &State, area: Rect) {
                 Style::default()
             };
             let dim = Style::default().fg(Color::Gray);
-            Row::new([
+            let mut cells = vec![
                 Cell::from(Span::styled(row.title.clone(), title_style)),
                 Cell::from(Span::styled(row.artists.clone(), dim)),
-                Cell::from(Span::styled(row.album.clone(), dim)),
-                Cell::from(
-                    Line::styled(row.duration_ms.map(clock).unwrap_or_default(), dim)
-                        .alignment(Alignment::Right),
-                ),
-            ])
+            ];
+            if wide {
+                cells.push(Cell::from(Span::styled(row.album.clone(), dim)));
+            }
+            cells.push(Cell::from(
+                Line::styled(row.duration_ms.map(clock).unwrap_or_default(), dim)
+                    .alignment(Alignment::Right),
+            ));
+            Row::new(cells)
         })
         .collect();
-    let table = Table::new(
-        rows,
-        [
+    let widths = if wide {
+        vec![
             Constraint::Percentage(44),
             Constraint::Percentage(28),
             Constraint::Percentage(28),
             Constraint::Length(5),
-        ],
-    )
-    .column_spacing(2)
-    .block(block)
-    .row_highlight_style(selected_style(focused));
+        ]
+    } else {
+        vec![
+            Constraint::Percentage(60),
+            Constraint::Percentage(40),
+            Constraint::Length(5),
+        ]
+    };
+    let table = Table::new(rows, widths)
+        .column_spacing(2)
+        .block(block)
+        .row_highlight_style(selected_style(focused));
     let mut selection = TableState::default().with_selected(Some(view.selected));
     frame.render_stateful_widget(table, area, &mut selection);
 }
@@ -167,10 +184,11 @@ fn draw_lyrics(frame: &mut Frame, state: &State, area: Rect) {
         return;
     };
     if lyrics.lines.is_empty() {
-        let message = lyrics
-            .error
-            .clone()
-            .unwrap_or_else(|| "No lyrics for this song.".into());
+        let message = match &lyrics.error {
+            Some(error) => error.clone(),
+            None if lyrics.loading => "Loading…".into(),
+            None => "No lyrics for this song.".into(),
+        };
         frame.render_widget(
             Paragraph::new(Line::styled(message, dim)).alignment(Alignment::Center),
             inner,

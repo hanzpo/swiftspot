@@ -15,9 +15,7 @@ current release.
 ## What stays on your computer
 
 - **Spotify sign-ins.** The grants Spotify issues when you sign in, and the
-  reusable playback credential, are kept in the system credential store:
-  Credential Manager on Windows, Keychain on macOS, and Secret Service on
-  Linux. Your Spotify password never passes through SwiftSpot; you sign in
+  reusable playback credential, are kept in the Keychain. Your Spotify password never passes through SwiftSpot; you sign in
   on Spotify's own pages. A proxy password, if you set one, uses the same
   store.
 - **Settings and history.** Settings, window positions, recent plays, the
@@ -28,7 +26,7 @@ current release.
   computer and never contains credentials; share it only if you choose to
   attach it to a bug report.
 
-[Settings & Files](/settings-and-files/) lists every location and what is safe
+[Settings & Files](settings-and-files.md) lists every location and what is safe
 to delete. **Sign out** in Settings removes the stored credentials.
 
 ## What is sent, and to whom
@@ -51,13 +49,7 @@ SwiftSpot connects only to the services below.
 - **Your local network.** SwiftSpot looks for Spotify Connect speakers over
   mDNS and talks to the ones you choose.
 
-Links you open from the app, such as this website, open in your browser.
-
-## This website
-
-spotifast.rocks counts page visits with [Plausible](https://plausible.io/data-policy),
-which uses no cookies and collects no personal data. The app itself contains
-no analytics.
+Links you open from the app open in your browser.
 
 ## Questions
 

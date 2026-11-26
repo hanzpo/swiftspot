@@ -6,35 +6,21 @@ body:
     attributes:
       value: |
         Please include the log from SwiftSpot's last run:
-
-        - Linux: `~/.local/state/swiftspot/swiftspot.log`
-        - macOS: `~/Library/Application\ Support/com.hanzpo.swiftspot/swiftspot.log`
-        - Windows: `%LOCALAPPDATA%\hanzpo\swiftspot\data\swiftspot.log`
+        `~/Library/Application\ Support/com.hanzpo.swiftspot/swiftspot.log`
 
         If the app crashed or vanished, include `panic.log` from the same folder.
   - type: input
     id: version
     attributes:
       label: SwiftSpot version and how you installed it
-      placeholder: "0.5.0-rc1 from the AUR / the DMG / the Windows installer / Homebrew / the Flatpak bundle"
-    validations:
-      required: true
-  - type: dropdown
-    id: os
-    attributes:
-      label: Operating system
-      options:
-        - Linux
-        - macOS
-        - Windows
+      placeholder: "1.1.0 from Homebrew"
     validations:
       required: true
   - type: input
     id: os_details
     attributes:
-      label: System details
-      description: Distribution and desktop on Linux, or the OS version.
-      placeholder: "Arch, Hyprland, PipeWire / macOS 15.6 / Windows 11 24H2"
+      label: macOS version
+      placeholder: "macOS 27.2"
     validations:
       required: true
   - type: dropdown

@@ -70,8 +70,8 @@ asks Spotify's token endpoint whether it knows the ID, with a code that
 cannot be valid: an unknown client is refused as `invalid_client` and a
 real one as `invalid_grant`, so an unknown ID is reported before the browser
 opens. A sign-in the app's verification answers with 403 means the account
-is not the app's owner or lacks Premium. See
-[Your own Spotify app](/make-it-even-faster/).
+is not the app's owner or lacks Premium. The sign-in page in the app walks
+through creating your own Spotify app.
 
 Since 0.8.0, a search runs as two requests when a
 personal app is ready and a shared grant is still signed in: songs, artists, albums, podcasts, and episodes on the
@@ -111,19 +111,15 @@ current-track pickup.
 ## What the client stores
 
 - Since 0.8.0, shared and personal Web API grants
-  and the reusable playback credential use the platform credential store:
-  Secret Service on Linux, Keychain on macOS, and Credential Manager on
-  Windows. Librespot retains its reusable credential in memory; SwiftSpot
-  owns persistence. Flatpak can talk to `org.freedesktop.secrets` for this.
+  and the reusable playback credential use the Keychain. Librespot retains
+  its reusable credential in memory; SwiftSpot owns persistence.
   Version 0.7.1 still uses the older unencrypted files.
-  See [migration, sign-out, and storage protection](/settings-and-files/).
+  See [migration, sign-out, and storage protection](settings-and-files.md).
 - Downloaded audio and artwork, in the cache directory, within the budget
   you set.
-- On Windows and macOS, desktop media controls load the cover themselves and
-  are given a file, so the full-size artwork is downloaded into that cache
-  when a song starts, even when no view on screen is showing it. Linux MPRIS
-  carries the Spotify artwork URL for the desktop to resolve and asks for
-  nothing extra.
+- Now Playing loads the cover itself and is given a file, so the full-size
+  artwork is downloaded into that cache when a song starts, even when no view
+  on screen is showing it.
 - Lyrics, in the cache directory, for a month.
 - Liked Songs metadata, scoped to the verified account, in the cache directory.
   This behavior is available since 0.8.0.
@@ -296,9 +292,6 @@ in again after updating, approve the image upload permission. Reconnect your
 personal app in Settings too, if you use one. Local playback authorization is
 unchanged. Spotify can refuse changes to playlists you do not own.
 
-On Linux the file picker uses a desktop portal, with Zenity as a fallback.
-Install your desktop's file chooser portal or Zenity if no picker opens.
-
 ## Receivers on the local network
 
 Spotify's device list only shows signed-in receivers. A new librespot or
@@ -333,11 +326,6 @@ This uses the existing playback session's Connect transfer request and needs
 no additional authorization. An old or unavailable Web API playback snapshot
 does not cause the previous local song to restart or replace the remote queue.
 
-When the PulseAudio backend is selected on Linux, its PulseAudio or PipeWire
-stream is named **SwiftSpot**, with **Spotify playback** as its description, so
-system mixers and audio processors can identify and route it. Explicit
-`PULSE_PROP_application.name` and `PULSE_PROP_stream.description` environment
-values take precedence.
 The same session checks releases that the Web API calls `single`, so confirmed
 EPs can carry their precise label. SwiftSpot deduplicates these checks while
 the app session is active. If the engine reconnects, an interrupted check may
@@ -446,8 +434,8 @@ to anything else opens like any other Spotify link.
 Since 0.9.0, Settings → Proxy has four modes:
 
 - **Off**: a direct connection. Environment proxy variables are ignored.
-- **System**: `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`, and on macOS and
-  Windows the OS proxy. This is the default.
+- **System**: `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`, and the macOS
+  proxy. This is the default.
 - **HTTP**: a configured HTTP proxy: host, port, and optional login.
 - **SOCKS5**: a configured SOCKS5 proxy: host, port, and optional login.
   Spotify hostnames are resolved by that proxy.
@@ -463,7 +451,7 @@ Local playback can only use an unauthenticated, plaintext HTTP proxy: that is
 what librespot's CONNECT client supports. Proxy login still covers catalogue
 and control, but the engine then connects to Spotify directly. SOCKS5 behaves
 the same way for local playback. System uses the same proxy reqwest would
-(environment variables, and the OS proxy on macOS and Windows) only when it
+(environment variables, and the macOS proxy) only when it
 is an unauthenticated `http://` endpoint; authenticated, `https://`, and SOCKS
 system proxies are ignored by the engine. Applying a proxy choice restarts
 local playback when it changes the endpoint used by the current connection,
@@ -480,4 +468,4 @@ switching to a direct connection. Applying a valid configuration repairs it.
 On startup, network work waits for the protected proxy password to be restored.
 That lookup runs on the credential worker and does not block the interface or
 shutdown. The password belongs to its host, port, and username; editing any of
-these fields clears it. See [password storage and migration](/settings-and-files/).
+these fields clears it. See [password storage and migration](settings-and-files.md).

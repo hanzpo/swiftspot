@@ -36,33 +36,6 @@ A bug can be closed once its fix is on `main` and the relevant checks pass,
 with the commit and release status stated. Reporter confirmation is welcome
 but is not required for closure. Reopen the issue if it persists after updating.
 
-## Automated triage
-
-[Copilot Triage](https://github.com/crmne/copilot-triage) assesses new and
-reopened issues and new discussions. It uses the report and latest five
-comments plus previous bot replies, adds up to two labels, and may condense a
-long new issue into one concise recap. Follow-up replies must add help: a
-necessary question, supported answer, applicable policy, released fix, or useful
-issue link. Clear duplicates can be closed after comparison; related reports
-stay open. Maintainers handle uncertain decisions and removing obsolete labels.
-
-Human follow-ups can trigger reassessment. The agent decides whether a reply
-would help; repeated updates and thanks usually need none. Use `/triage` to
-request reassessment, `/triage mute` to stop automatic replies, or maintainer-only
-`/triage unmute` to resume them. You can also run **Issue assessment** from Actions
-with the report kind and number. Preview is enabled by default; turn it off to
-apply the result. The agent uses scoped read-only tools to investigate; only
-conversation state and the CLI installation are cached. A party-popper reaction
-marks a completed assessment,
-including one that needed no reply; it does not promise acceptance or a fix.
-Bot comments are skipped; configured error-monitoring bots can open reports.
-Model failures stay in the job summary.
-
-The `COPILOT_ISSUE_ASSESSMENT_ENABLED` repository variable controls the workflow.
-Edit `.github/triage.yml` for labels, replies, source files, and response policy.
-The shared action follows tested `v0` releases in `.github/workflows/issue-assessment.yml`; its
-implementation and regression tests live in the Copilot Triage repository.
-
 ## Design principles
 
 1. **Native and fast.** Startup time, idle work, memory use, and binary size
@@ -72,9 +45,8 @@ implementation and regression tests live in the Copilot Triage repository.
 3. **Honest integrations.** Use Spotify's Web API and librespot for what they
    support. Do not scrape, impersonate capabilities, bypass technical
    protections, or silently replace one service with another.
-4. **Cross-platform by default.** Linux, macOS, and Windows are supported
-   products. Platform-specific code must be isolated and the other targets
-   must keep compiling.
+4. **macOS only.** SwiftSpot is a SwiftUI app with its Rust engine linked
+   in. Build for the current macOS and nothing older.
 5. **Small dependency surface.** Reuse the standard library and existing
    crates where practical. A new dependency needs a concrete benefit worth
    its build time, binary size, maintenance, and security cost.
@@ -98,16 +70,15 @@ The same rules apply to hand-written and AI-assisted changes. The author must
 understand every line and answer review comments with specific reasoning.
 
 Code changes should include tests for behaviour that can regress. UI changes
-should include before/after screenshots or a short recording and should use
-demo mode where possible. User-visible behaviour, settings, files, or network
+should include before/after screenshots or a short recording. User-visible behaviour, settings, files, or network
 access must be documented in the same pull request.
 
 ### Visual reviews
 
-Provide an HTML comparison with actual before-and-after captures, using demo
-mode where possible. Match the data, page, interaction state, zoom and window
+Provide an HTML comparison with actual before-and-after captures, made with
+the app's probe mode (`SWIFTSPOT_PROBE`, `SWIFTSPOT_SNAPSHOT`) where possible. Match the data, page, interaction state, zoom and window
 size so the difference shows the proposed change. Identify the baseline and
-candidate, and report which platforms actually produced the captures.
+candidate.
 
 Include light/dark and narrow/normal window selectors, plus Before and After
 buttons or a comparison slider. Show relevant open menus, loading, error and
@@ -128,47 +99,24 @@ ask again only if the resulting scope goes beyond what was approved or requested
 Run the same checks CI runs before submitting:
 
 ```sh
-python3 packaging/test-launchers.py
 cargo fmt --all --check
 cargo clippy --locked --all-targets -- -D warnings
-cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-targets
-cargo test --locked --all-targets --all-features
-cargo test --locked --all-features --doc
-RUSTDOCFLAGS='-D warnings' cargo doc --locked --all-features --no-deps
-(cd docs && bundle exec jekyll build)
+cargo test --locked --doc
+cargo build --locked --release --lib
+(cd apple && swift build -c release)
 ```
 
-Linux needs the development packages listed under
-[Build from source](https://spotifast.rocks/getting-started/#build-from-source); `nix develop`
-provides the complete development environment. The command compatibility test
-also needs `dbus-run-session`, to use a private bus instead of the desktop's.
-CI repeats the test suite on Linux, macOS, and Windows. Passing CI is required, but does not replace review
-for correctness, product fit, maintainability, or security.
+Passing CI is required, but does not replace review for correctness, product
+fit, maintainability, or security.
 
-Credential-storage changes also need a native store round trip. With the
-desktop keyring unlocked, run
+Credential-storage changes also need a keychain round trip: run
 `cargo test --locked --lib credentials::tests::native_store_round_trip -- --ignored --exact`.
-It uses temporary dummy grants and deletes them afterward. CI runs this check
-on macOS and Windows; Linux requires an available Secret Service provider.
-The ordinary test suite uses an isolated fake store and never reads a real
-Spotify grant. Demo mode also skips credential restoration.
+It uses temporary dummy grants and deletes them afterward. The ordinary test
+suite uses an isolated fake store and never reads a real Spotify grant.
 
-Flatpak state-persistence changes also need
-`packaging/flatpak/test-state.sh`. It requires Flatpak, Ruby, and an installed
-Platform runtime, and checks both manifests using disposable dummy state.
-Pass a runtime and branch to use an existing installation, for example
-`packaging/flatpak/test-state.sh org.kde.Platform 6.9`.
-
-Documentation deployments take their canonical URL from the domain configured
-in GitHub Pages. When changing domains, configure DNS and GitHub Pages before
-redeploying; the previous hostname keeps working until that switch. Renamed
-guides use `jekyll-redirect-from` to preserve their old URLs.
-
-When changing `Cargo.lock` or `flake.nix`, also verify `nix build .#default`
-on a Nix host or wait for the Nix CI job. A package-version-only lockfile
-change can change the vendor hash. Releases must wait for all required CI
-jobs on the version commit before the tag is pushed.
+To try the app without touching your own data or sign-in, run it with
+`SWIFTSPOT_DATA` set to an empty folder (see `apple/README.md`).
 
 By contributing, you agree that your contribution is licensed under the
 project's MIT License.

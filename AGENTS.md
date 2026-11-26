@@ -16,13 +16,20 @@ These instructions add implementation constraints for coding agents.
 
 ## Architecture
 
-- `src/ui/` draws views and emits `Action`s. Apply actions after drawing in
-  `src/app.rs`; do not mutate application state from inside a borrowed view.
-- Network and playback work belongs on the runtime in `src/backend.rs` or in
-  the player engine in `src/player.rs`, never as blocking work on the UI
-  thread.
-- Keep platform integrations behind target-specific modules or `cfg` blocks.
-  A fix for one platform must keep the other two targets compiling.
+- SwiftSpot is one macOS process. The SwiftUI app in `apple/` draws
+  everything; the Rust engine in `src/` is linked into it as a static library
+  and runs on threads of its own.
+- The app talks to the engine only through the JSON API: requests go in
+  through `src/ffi.rs` (`swiftspot_send`), `src/app/api.rs` answers them, and
+  replies and events come back through the callback. `apple/README.md` lists
+  the methods and events. Push an event when engine state changes instead of
+  having the app poll.
+- The engine loop (`App::engine_step`) sleeps until woken. Anything that
+  needs the engine to act must wake it through `Waker`; do not add fixed
+  ticks.
+- Network, disk and image work belongs on the runtime in `src/backend.rs` or
+  in the player engine in `src/player.rs`, never as blocking work on the
+  engine thread or the main thread.
 - Settings and state files must remain readable, backward compatible, and
   atomically written. Never log credentials or authorization responses.
 - Prefer existing dependencies. Explain any new crate in `Cargo.toml` next to
@@ -30,14 +37,6 @@ These instructions add implementation constraints for coding agents.
 - For dependency fixes, use a maintainer-owned fork pinned to a commit and
   contribute the fix upstream. Use the fork until a release includes the fix;
   do not copy dependency source into this repository.
-- egui and winit come from forks shared with ZapFast, RekordFlash and TonePush
-  (crmne/egui apps-0.36, crmne/winit apps-0.30); move all their crates to a
-  new revision together. On Wayland, eframe from that fork paces frames by
-  the compositor's frame callbacks instead of a vsync swap, so a hidden window
-  cannot freeze the app (#266). Do not add a vsync decision of our own.
-- The egui fork shapes right-to-left runs in their own direction but leaves
-  them in logical order. Pass logical text to `crate::bidi`, which reorders
-  the laid-out runs; never reorder the string before layout.
 
 Read `docs/_reference/how-it-connects.md` before changing authentication,
 Spotify requests, Connect, credential storage, or network behaviour. Read
@@ -152,46 +151,34 @@ mise or mbx.
 
 ## Definition of done
 
-- Add focused regression tests for changed behaviour. Use the `demo` feature
-  for deterministic UI coverage and screenshots.
+- Add focused regression tests for changed behaviour. Engine API tests
+  connect with `App::connect_front_end` and read the pushed messages.
+- Test the app off-screen with `SWIFTSPOT_DATA` (a separate data folder),
+  `SWIFTSPOT_PROBE` and `SWIFTSPOT_SNAPSHOT`, never against the person's own
+  data or sign-in.
 - Update the README and docs when user-visible behaviour, settings, files, or
   network access changes.
 - Run the full checks from `CONTRIBUTING.md`. Do not weaken a lint, delete a
   test, or add an `allow` merely to make CI green without explaining why the
   underlying rule does not apply.
-- Report platform coverage honestly. Do not claim a platform was tested when
-  it was only compiled or reasoned about.
+- Report test coverage honestly. Do not claim something was tested when it
+  was only compiled or reasoned about.
 
 ## Releases
 
 A release is not the tag alone. Do these in order:
 
-1. Change the `Cargo.toml` version, add the matching release to the Flatpak
-   metainfo, and update the lockfile with a build.
-   Refresh the `flake.nix` vendor hash when the lockfile changes, even when
-   only the package version changed. Verify `nix build .#default` locally or
-   in CI. Wait for every required CI job on the release commit before tagging.
-   Commit and push this before the tag so the binaries report the right
-   version. Include written notes in `packaging/release-notes/vVERSION.md`
-   so the release publishes the real description immediately.
-2. Push the `v*` tag, which triggers the release workflow. Wait for every
-   required artifact and `checksums.txt`, then verify the published written
-   notes, screenshot and download links. Never publish generated placeholder notes.
-3. A prerelease stops here. Keep the stable version current on the website,
-   Homebrew, and AUR. The prerelease remains available from GitHub's releases
-   page.
-4. For a stable release, only after the GitHub release exists, update
-   `docs/_config.yml` `swiftspot_version` and
-   `docs/_data/versions.yml`. The selector carries only the latest stable
-   version: replace its version entry, make it `current`, and point it at
-   `/download/`. Do not retain older version entries; they remain available
-   through the Changelog link. Never make the download page point at files
-   that do not exist yet.
-5. Update the Homebrew cask in the maintainer's tap and the AUR package from
-   the release's `checksums.txt`. The packaging workflow handles configured
-   destinations when `PUBLISH_HOMEBREW` and `PUBLISH_AUR` are enabled. Otherwise
-   use the in-repository packaging CLI to prepare, review and publish them;
-   see `PACKAGING.md`. Native package validation remains required.
+1. Change the `Cargo.toml` version and update the lockfile with a build.
+   `apple/install.sh` takes the app's version from it. Write the notes in
+   `packaging/release-notes/vVERSION.md`. Commit and push.
+2. Build and check the bundle with `BUILD_ONLY=1 apple/install.sh`, then zip
+   it as Homebrew expects:
+   `ditto -c -k --keepParent apple/.build/SwiftSpot.app SwiftSpot-VERSION.zip`.
+3. Create the release on `hanzpo/swiftspot` with the tag `vVERSION`, the
+   title `SwiftSpot VERSION`, the written notes and the zip. Never publish
+   generated placeholder notes.
+4. Update `Casks/swiftspot.rb` in `hanzpo/homebrew-tap`: the version and the
+   zip's SHA-256. Check that `brew install hanzpo/tap/swiftspot` installs it.
 
 Before writing release notes, read the previous two stable releases and match
 their style. Start with a short plain-language summary, use `New` and `Fixed`
@@ -201,5 +188,4 @@ include a `Thanks` section, and end with the full changelog link. Do not leave
 the generated notes in place or introduce a different section scheme for
 ordinary improvements.
 
-Skipping an applicable step ships a release that lies somewhere; the dropdown
-was forgotten once already.
+Skipping an applicable step ships a release that lies somewhere.

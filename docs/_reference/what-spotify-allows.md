@@ -38,7 +38,7 @@ SwiftSpot limits heavy requests and pauses a session when Spotify sends a
 Spotify also limits apps created since November 2024. These apps cannot access
 Spotify-owned playlists, related artists, recommendations, or audio features.
 So playlists other people own, and the account's own playlists, are read
-over the librespot session while local playback is signed in. See [How It Connects](/how-it-connects/).
+over the librespot session while local playback is signed in. See [How It Connects](how-it-connects.md).
 
 ## librespot session
 

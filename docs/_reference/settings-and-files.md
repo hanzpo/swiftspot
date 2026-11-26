@@ -6,51 +6,48 @@ nav_order: 0
 
 ## Where things live
 
-Linux media controls use `playerctl --player=swiftspot`.
-
-SwiftSpot follows each platform's conventions. On Linux:
+Settings, state and the logs are in
+`~/Library/Application Support/com.hanzpo.swiftspot/`; the caches are in
+`~/Library/Caches/com.hanzpo.swiftspot/`. Below, `Support` and `Caches`
+stand for these two folders.
 
 | What | Where | Safe to delete? |
 | --- | --- | --- |
-| Settings | `~/.config/swiftspot/settings.json` | Yes, you lose preferences |
-| Spotify grants (available since 0.8.0) | System credential store | Use Sign out in Settings |
-| Credential revocation markers (available since 0.8.0) | `~/.local/state/swiftspot/credential-storage/` | Keep after a failed sign-out deletion |
-| Legacy shared Web API grant | `~/.local/state/swiftspot/shared_web_api_token.json` | Removed after migration or sign-out |
-| Legacy personal Web API grant | `~/.local/state/swiftspot/personal_web_api_token.json` | Removed after migration or sign-out |
-| Legacy playback credential | `~/.local/state/swiftspot/credentials/` | Removed after migration or sign-out |
-| Proxy password | System credential store | Clear the password and apply the manual proxy settings |
-| Legacy proxy password | `~/.local/state/swiftspot/proxy_password` | Removed after protected migration |
-| Last session | `~/.local/state/swiftspot/session.json` | Yes |
-| Play history | `~/.local/state/swiftspot/history.json` | Yes |
-| Audio cache | `~/.cache/swiftspot/audio/` | Always |
-| Artwork cache | `~/.cache/swiftspot/art/` | Always |
-| Lyrics cache | `~/.cache/swiftspot/lyrics/` | Always |
-| Karaoke's vocal model (macOS) | `~/Library/Caches/com.hanzpo.swiftspot/karaoke/` | Always; downloaded again when karaoke is next turned on |
-| Account-scoped playlist page cache | `~/.cache/swiftspot/playlists/<account-id>/` | Always |
-| Account-scoped Home shelves and library rows | `~/.cache/swiftspot/home/` | Always |
-| Last run's log | `~/.local/state/swiftspot/swiftspot.log` | Always |
-| Crash log | `~/.local/state/swiftspot/panic.log` | Always |
+| Settings | `Support/settings.json` | Yes, you lose preferences |
+| Spotify grants | Keychain | Use Sign out in Settings |
+| Credential revocation markers | `Support/credential-storage/` | Keep after a failed sign-out deletion |
+| Legacy shared Web API grant | `Support/shared_web_api_token.json` | Removed after migration or sign-out |
+| Legacy personal Web API grant | `Support/personal_web_api_token.json` | Removed after migration or sign-out |
+| Legacy playback credential | `Support/credentials/` | Removed after migration or sign-out |
+| Proxy password | Keychain | Clear the password and apply the manual proxy settings |
+| Legacy proxy password | `Support/proxy_password` | Removed after protected migration |
+| Last session | `Support/session.json` | Yes |
+| Play history | `Support/history.json` | Yes |
+| Audio cache | `Caches/audio/` | Always |
+| Artwork cache | `Caches/art/` | Always |
+| Lyrics cache | `Caches/lyrics/` | Always |
+| Karaoke's vocal model | `Caches/karaoke/` | Always; downloaded again when karaoke is next turned on |
+| Account-scoped playlist page cache | `Caches/playlists/<account-id>/` | Always |
+| Account-scoped Home shelves and library rows | `Caches/home/` | Always |
+| Last run's log | `Support/swiftspot.log` | Always |
+| Crash log | `Support/panic.log` | Always |
 
 Clearing caches never signs you out. Sign-out from Settings covers the shared
 and personal Web API grants and the independent playback credential.
 
 The following credential storage is available since 0.8.0.
 
-Durable grants use **Secret Service on Linux**, **Keychain on macOS**, and
-**Credential Manager on Windows**, under the service name
+Durable grants use the **Keychain**, under the service name
 `com.hanzpo.swiftspot`. Entries are separated by application state
 location and grant type; Web grants carry their Client ID and must verify as
 the same account. Playback and receiver activation require that account too.
 Non-secret settings and session data remain readable JSON. Native credential
 protection reduces exposure from copying ordinary application files. It does
-not protect a usable session from arbitrary code running as the same user;
-Linux protection also depends on the desktop keyring's configuration.
+not protect a usable session from arbitrary code running as the same user.
 
-On Linux, enable and unlock a Secret Service provider such as GNOME Keyring or
-KWallet to remember a new sign-in. Flatpak is allowed to talk to
-`org.freedesktop.secrets` for this purpose. An unavailable or locked store
-produces an error without blocking the interface. A new sign-in can still be
-used for this session, with no new plaintext fallback file.
+A locked or unavailable keychain produces an error without blocking the
+interface. A new sign-in can still be used for this session, with no
+plaintext fallback file.
 
 On upgrade, each legacy grant is written to the protected store and read back
 before its old file is removed. Valid grants migrate without signing in again.
@@ -70,8 +67,7 @@ entry deletion from restoring the session on restart; keep these markers when
 a deletion failed. Changing the Client ID clears the old app's grant.
 
 Version 0.7.1 and earlier use the legacy unencrypted files listed above. Their
-Web API writer requests owner-only permissions for newly created Unix files;
-Windows uses inherited permissions. Librespot's old writer uses the system's
+Web API writer requests owner-only permissions for newly created files. Librespot's old writer uses the system's
 file defaults. Keep these legacy files, their temporary copies, the
 `credentials/` directory, and credential-store exports out of issue attachments
 and diagnostic uploads.
@@ -129,8 +125,6 @@ compact rows and softened placeholders keep using 64-pixel thumbnails. Up to 64
 softened 256-pixel covers may be retained in addition to the existing artwork
 budget, and their downloaded image bytes are released after decoding. A failed
 cache write does not prevent the downloaded image from being displayed.
-Softened previews reuse egui's decoded artwork after its encoded bytes have
-been released, without repeatedly reading the disk cache or downloading again.
 
 The following Liked Songs caching behavior is available since 0.9.0.
 
@@ -166,60 +160,10 @@ their rows stay in memory until the write and its snapshot are confirmed,
 even if this temporarily exceeds the usual page limit. Track metadata is
 limited to 800 cached tracks; navigation and periodic cleanup trim old entries.
 
-The session remembers the window's position. Wayland compositors
-may ignore saved positions. On Windows, a position
-whose title bar is no longer on an available monitor's work area is discarded
-when reopening the window, keeping its initial on-screen placement instead.
-
-Since 0.8.0, a main window left maximized or full
-screen reopens that way. The
-remembered size and position describe an ordinary window and are not applied
-to one that already fills the screen, because sizing or moving such a window
-restores it down.
-
-Since 0.8.0, album and playlist scrollbars reserve the full track count
-as soon as Spotify reports it. Dragging to an unloaded section shows placeholders and requests
-that section directly. Loaded windows stay in memory while the page is retained;
-returning to one does not download it again. Unavailable entries keep their row
-positions. Playlist edits and refreshes invalidate other cached windows because
-their server positions may have changed. Only contiguous playlist prefixes are
-saved on disk.
-
-Since 0.10.0, large playlist pages no longer show a **Go to song**
-control; drag the scrollbar to reach a distant song instead. Filtering or
-sorting returns to the beginning and loads remaining pages as needed, since
-local search and ordering require the track metadata. A failed window stops
-automatic requests and shows a Retry button in the reserved row space.
-
-Since 0.8.0, Flatpak also preserves the fallback
-state directory used when `XDG_STATE_HOME` is unset. Session state, history,
-logs, and credential revocation markers survive a full quit and relaunch under
-`~/.var/app/com.hanzpo.swiftspot/.local/state/swiftspot/`. Configuration
-and caches remain under the app's `config/` and `cache/` directories. State
-already lost on quitting an older release cannot be recovered.
-
-On macOS, settings, state, and the logs are in
-`~/Library/Application Support/com.hanzpo.swiftspot` and the caches in
-`~/Library/Caches/com.hanzpo.swiftspot`. On Windows, settings are in
-`%APPDATA%\hanzpo\swiftspot\config`, state and the logs in
-`%LOCALAPPDATA%\hanzpo\swiftspot\data`, and the caches in
-`%LOCALAPPDATA%\hanzpo\swiftspot\cache`.
-
-The running copy keeps its single-instance files in a private directory:
-`$XDG_RUNTIME_DIR/swiftspot` on Linux (inside Flatpak, the app's own runtime
-directory), a `swiftspot` folder in your private temporary directory
-(`$TMPDIR`) on macOS, and an `instance` folder in the state directory on
-Windows. `instance.lock` marks the running copy; the system releases it when
-SwiftSpot quits or crashes. `instance.sock` (Linux and macOS) is the socket
-a second launch and the `swiftspot` command reach it through, which only your
-user can open. On Windows, `instance.key` holds the loopback port and a
-random token that every request must carry. SwiftSpot writes them on each
-start; nothing in them needs keeping.
-
 ## settings.json
 
-Settings are stored in one readable JSON file and written atomically. Its
-main fields are:
+Settings are stored in one readable JSON file and written atomically. The
+app's Settings window changes these fields:
 
 | Field | Default | Meaning |
 | --- | --- | --- |
@@ -228,108 +172,24 @@ main fields are:
 | `normalisation` | `false` | Volume normalisation |
 | `autoplay` | `true` | Keep playing similar music at the end |
 | `gapless` | `true` | Gapless playback |
-| `audio_backend` | platform | `pulseaudio` or `rodio` on Linux. `rodio` is SwiftSpot's own output, through ALSA; librespot's separate rodio backend is no longer built in, and a backend this build lacks plays through SwiftSpot's own output |
 | `audio_cache_mb` | `1024` | On-disk audio cache budget |
-| `theme` | `system` | Follow the system appearance by default; explicit `dark` and `light` choices remain available |
-| `custom_theme` | `null` | Selected JSON filename from the `themes` folder |
-| `custom_theme_cache` | absent | Last accepted custom palette; preserves appearance if its file is missing or invalid |
-| `system_theme_cache` | absent | Last accepted Omarchy palette for Follow system; retained across restarts |
-| `accent_from_art` | `true` | Take the accent colour from album art |
-| `library_sort` | `{}` | Per-section Library order overrides, since 0.8.0: `library`, `recently_played`, `name`, `recently_added`, `local`, or `spotify`, where supported |
-| `sidebar_order` | `[]` | Saved local playlist arrangement, including an unpinned Liked Songs, retained when another sort is selected |
-| `pinned_contexts` | `[]` | Local Library pin order; Liked Songs uses `swiftspot:liked-songs`, a local key never sent to Spotify |
-| `liked_songs_pinned` | `true` | Keep Liked Songs in the pin block; older settings place it first until moved |
-| `sidebar_compact` | `false` | Names only in the library sidebar, no covers |
-| `sidebar_grid` | `false` | Library entries as responsive cover cards instead of rows |
-| `tracklist_compact` | `false` | One-line track rows without covers |
-| `middle_click_autoscroll` | `false` | Linux only: middle-click a list to autoscroll it. Windows always autoscrolls and macOS never does |
-| `custom_titlebar` | `false` | Windows only, since 0.10.0: draw SwiftSpot's own title bar and window buttons instead of the standard Windows ones |
 | `eq_on` | `false` | The equalizer shapes local playback |
 | `eq_preamp_db` | `0` | The preamp, in decibels, -12 to 12 |
 | `eq_bands_db` | ten zeros | The bands from 60 Hz to 16 kHz, in decibels, -12 to 12 |
-| `balance` | `0` | Left to right, -1 to 1, for local playback; no longer set in the app, a saved value still applies |
 | `karaoke_vocal_level` | `0` | How much of the voice karaoke leaves, 0 to 1 |
-| `mono` | `false` | Play both channels the same; no longer set in the app, a saved value still applies |
-| `keep_playing_in_background` | `true` | Close to tray (Windows and Linux; macOS always quits) |
-| `mac_notch_widget` | `false` | Show interactive Now Playing widget when hovering over the MacBook notch (macOS only) |
 | `web_client_id` | none | The Client ID of your own Spotify app, which SwiftSpot signs in with |
-| `personal_app_nudge_at` | none | Legacy daily-reminder timestamp, retained for older releases |
-| `personal_app_intro_seen` | `false` | Whether the Premium personal-app introduction was dismissed or followed (available since 0.8.0) |
-| `proxy_mode` | `system` | `off`, `system`, `http`, or `socks`. Older files without this field stay on `system` |
-| `proxy_host` | none | Host of a manual HTTP or SOCKS5 proxy. Ignored when the mode is `off` or `system` |
+| `proxy_mode` | `system` | `off`, `system`, `http`, or `socks` |
+| `proxy_host` | none | Host of a manual HTTP or SOCKS5 proxy |
 | `proxy_port` | none | Port of a manual HTTP or SOCKS5 proxy |
 | `proxy_username` | none | Optional proxy login for Web requests; authenticated local playback proxying is not supported |
 
-## Command line
-
-```
-swiftspot [OPTIONS] [LINK]
-
-  LINK                  A Spotify link to open: spotify:track:…, or an
-                        open.spotify.com address
-  --device-name <NAME>  Spotify Connect name for this session
-  -v, --verbose         More logs from librespot and the API client
-```
-
-A link goes to the running SwiftSpot when there is one, which then opens
-the page and brings its window forward; otherwise the app starts on it. The
-desktop's handler for `spotify:` links runs exactly this.
-
-Attach `swiftspot.log` from the state directory to bug reports. It contains
-the last run's output, including extra lines from `swiftspot -v`. After a
-crash, attach `panic.log` too.
-
-## Demo mode
-
-Builds made with `cargo build --features demo` accept `--demo`, which loads
-sample data for screenshots and interface work. Demo mode never writes
-settings.
-
-`--demo-page` opens a page, such as `home`, `playlist:pl1`, or `artist:art0`,
-and `--demo-show` adds surfaces on top of it: a comma separated list of
-`queue`, `playing-next`, `devices`, `shortcuts`, `premium`, `create`, `duplicate`, `light`,
-`focus`, `compact`, `personal-app`,
-`collection-loading`, `shuffle-selected`, `shuffle-started`, `library-list`,
-`library-list-narrow`, `library-list-wide`, `library-grid`, `library-grid-narrow`,
-`library-grid-wide`, `rtl`,
-`lyrics-fullscreen-view`, `lyrics-fullscreen-instrumental`, `signed-out`, and `connecting`. The Library variants show the list or cover grid with
-a normal, narrow, or wide sidebar and collapsed artwork for matching captures.
-`shuffle-selected` and `shuffle-started` capture the selected-mode and
-playback-started outcomes of a collection Shuffle click. `personal-app` shows the personal Spotify
-app introduction.
-`signed-out` and `connecting` show the sign-in card before and while the
-session connects.
-`lyrics-fullscreen-view` and `lyrics-fullscreen-instrumental` draw full-screen
-lyrics, with words or without, at the window's own size.
-`rtl` gives the first songs of `playlist:pl1` invented Hebrew and Arabic
-titles, some mixed with English, numbers, and brackets.
-`collection-loading` keeps known collection metadata and placeholder artwork
-visible while replacing the page content, with unfinished controls disabled.
-
-`--demo-shot <PATH>` writes the window to a PNG and exits, which is useful for
-making deterministic screenshots for these pages:
-
-```
-cargo run --release --features demo -- \
-  --demo-shot docs/screenshot.png --demo-page playlist:pl1 --demo-show queue
-```
-
-The image uses the current window size. `--demo-size WIDTHxHEIGHT` sets that
-size in logical pixels for a shot (for example `760x800` or `1240x800`).
-`--demo-shot-delay <MS>` sets how long to wait for cover art before taking it.
-`--demo-drag X,Y:X,Y` shows a drag in progress: the pointer presses at the
-first point, in logical pixels, and is still held down at the second when the
-shot is taken.
-Since 0.8.0, demo windows ignore saved window geometry and do not
-read or save the normal window's framework state. Existing built-in appearance
-settings still apply. `--demo-data <DIRECTORY>` keeps demo caches and logs under
-that directory's `cache` and `state` folders, with settings read from `config`.
-Custom palettes and their cache are used only with an explicit `--demo-data`
-directory; the ordinary demo does not scan your real themes folder.
+Fields written by the old egui app (themes, sidebar and window layout) are
+kept unchanged so an older settings file stays readable, but nothing uses
+them.
 
 ## Home shelves
 
-Since 0.8.0, you can hide **Made for you** and **Recommended for you**
+You can hide **Made for you** and **Recommended for you**
 from Home independently. Quit SwiftSpot before editing `settings.json`, then
 restart it. Add this field to hide both:
 
@@ -344,144 +204,3 @@ Set either `visible` value to `true` to show that shelf again. Omitted
 preferences keep both shelves visible. Other Home sections keep their normal
 order and contents. This changes what is displayed; hidden shelves still
 refresh in the background.
-
-## Custom themes
-
-Since 0.11.0, SwiftSpot puts eight palettes in the `themes` folder beside
-`settings.json` the first time it starts: Catppuccin, Catppuccin Latte,
-Nord, Ristretto, Rose Pine, Rose Pine Dawn, Rose Pine Moon and Tokyo
-Night. They are ordinary palette files: read them to see how a theme is
-written, change them, or delete the ones you do not want. SwiftSpot never
-rewrites them, and a deleted one stays deleted; `.installed-palettes` in
-the folder records which it has already put there.
-
-To make your own, add JSON files to the `themes` folder.
-Run `swiftspot reload-themes` if the app is already open, then select it
-under **Settings → Appearance → Theme**, where it is listed by its filename
-without `.json`.
-The default is **Follow system**. It uses your desktop’s light/dark appearance,
-or the current Omarchy palette on an Omarchy desktop. On Linux,
-the light/dark appearance comes from the desktop portal's `color-scheme`
-setting (GNOME, KDE and Flatpak), and since 0.10.0, the app follows
-it when it changes. Saved Dark,
-Light and custom choices are preserved when updating. The picker starts with
-**Follow system**, **Light**, and **Dark**, then a separator. **Omarchy** comes
-next when the integration is available, followed by the other local palettes.
-Themes change colors and keep the app's existing fonts.
-**How to make a theme**, beside the picker, opens this section. The
-**Open themes folder** icon button beside the picker creates the folder if
-needed and opens it in your file
-manager.
-After adding or editing a JSON file on macOS or Windows, run
-`swiftspot reload-themes` to refresh the list and the selected palette without
-restarting playback. Since 0.10.2, SwiftSpot on Linux notices changes to the
-themes folder by itself.
-Choosing a built-in theme clears the custom selection.
-Since 0.11.0, whenever the colours change (a theme picked here, Omarchy
-switching themes, or the system going light or dark), the new colours open
-from the middle of the window outwards, as Omarchy's own theme change does.
-
-For example, `themes/gruvbox.json`:
-
-```json
-{
-  "base": "dark",
-  "colors": {
-    "window": "#282828",
-    "panel": "#1d2021",
-    "surface": "#32302f",
-    "text": "#ebdbb2",
-    "accent": "#b8bb26"
-  }
-}
-```
-
-`base` is `dark` (the default) or `light`. Omitted colors inherit that palette.
-Supported colors are `window`, `panel`, `surface`, `surface_hover`,
-`surface_active`, `outline`, `text`, `secondary`, `dim`, `accent`,
-`accent_hover`, `on_accent`, `danger`, `warning`, `overlay`, and `shadow`.
-Values must be `#RRGGBB` or `#RRGGBBAA`.
-
-Files are read in the background at launch and when `swiftspot reload-themes`
-is called. The command updates the selected palette without interrupting
-playback, changing your selection or showing the window. It does not start a
-stopped app. Repeated requests are combined while a scan is running. On Linux,
-filesystem notifications for the themes folder and Omarchy's current theme
-start the same reload, with no polling timer. Use regular UTF-8 `.json` files, not symbolic links or
-subdirectories. Each file is limited to 64 KiB. Keep at most 128 JSON files and
-512 total entries in the themes folder; the saved selection is still checked
-when a folder exceeds these limits.
-
-Invalid files are skipped with a warning in the log. SwiftSpot remembers the
-last accepted custom palette in `settings.json`. If the selected file is
-removed or becomes invalid, that appearance stays in place, including after
-a restart, and the Theme row explains the problem. Other preferences are
-preserved. A custom selection without any usable cached colors uses the
-built-in choice. Choosing Dark, Light or Follow system clears the custom
-selection and its cache. Editing or deleting the optional cache does not
-reset unrelated settings.
-
-A custom palette's `base` controls both its inherited colors and the light or
-dark styling of standard controls. Album-art tinting remains an independent
-setting; turn it off for fixed colors throughout. This first format controls colors only.
-
-### Follow an Omarchy theme
-
-Since 0.8.0, native Linux packages include the Omarchy integration.
-The first normal launch on an Omarchy desktop installs its template and
-theme-change hook in your user configuration, in the background. No copy
-commands or desktop restart are needed. A palette for the current theme is
-prepared without reapplying your desktop theme. New installations use
-**Follow system**, so Omarchy colours apply automatically on the first launch
-and track later theme changes. An existing explicit Dark, Light or custom
-choice stays selected. Choose **Follow system** or **Omarchy** under
-**Settings → Appearance → Theme** to follow Omarchy instead.
-
-Since 0.10.2, portable archives and Cargo builds follow Omarchy too: SwiftSpot
-reads the palette Omarchy rendered for it, or renders the template itself from
-the current theme's colours, and picks up theme changes without the hook.
-
-Setup never replaces an existing template, hook or palette, and never changes
-your selected theme. Other users are set up independently when they launch the
-app. Demo mode, portable archives and Cargo builds do not install the template
-or hook. A package uninstall removes the shared integration assets; your user
-configuration remains, like the rest of your preferences.
-
-For a manual installation, the repository includes an
-[Omarchy template](https://github.com/hanzpo/swiftspot/blob/main/contrib/omarchy/swiftspot.json.tpl)
-and a [theme-change hook](https://github.com/hanzpo/swiftspot/blob/main/contrib/omarchy/swiftspot-theme).
-Omarchy resolves its light/dark mode and colors through its
-[template system](https://omarchy.org/manual/making-your-own-theme/).
-The hook copies the result atomically into `themes/omarchy.json`, then asks a
-running SwiftSpot to reload it. It does not change your desktop theme or your
-SwiftSpot selection itself.
-
-For portable or Cargo installations, install the two files from a checkout:
-
-```sh
-mkdir -p ~/.config/omarchy/themed
-install -m 644 contrib/omarchy/swiftspot.json.tpl ~/.config/omarchy/themed/
-omarchy hook install theme-set contrib/omarchy/swiftspot-theme
-```
-
-Apply a theme through Omarchy's theme picker, then select **Omarchy** in
-SwiftSpot's **Settings → Appearance → Theme** once. Later Omarchy changes update
-that palette while music keeps playing. Turn off album-art tinting if every
-page should keep the theme's fixed colors.
-
-The hook uses Omarchy's current theme at
-`~/.local/state/omarchy/current/theme` and SwiftSpot's existing
-`${XDG_CONFIG_HOME:-~/.config}/swiftspot/themes` directory. The shipped hook
-is updated automatically if its contents have not been customized. A custom profile can set
-`SWIFTSPOT_THEMES_DIR` in the installed hook; this example uses the native
-`swiftspot` command, not a Flatpak launcher. Themes without `colors.toml` need
-their own `swiftspot.json` file. Missing or invalid palettes leave the last
-accepted appearance in place.
-
-To stop following Omarchy, choose Dark, Light or another custom theme in SwiftSpot.
-For a manual installation, remove only
-`~/.config/omarchy/hooks/theme-set.d/swiftspot-theme` and
-`~/.config/omarchy/themed/swiftspot.json.tpl`. Other hooks remain in place.
-Packaged launches recreate missing integration files. To disable the hook
-while keeping the package installed, leave that hook file empty instead;
-existing user files are preserved. Selecting Dark or Light is sufficient to stop following Omarchy's colors.

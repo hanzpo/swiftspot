@@ -20,3 +20,26 @@ Measured on an M5 MacBook, both apps signed in with their windows open. Spotifas
 Additional features
 - Karaoke mode - A local model removes vocals from a song in real time so you can sing along with the lyrics page
 - Liquid glass/other Apple-style UI elements
+- A terminal player, `swiftspot`, that controls the app from any terminal
+
+## In the terminal
+
+The app includes `swiftspot`, a terminal front end for the running app. It shows your library, playlists, search, the queue and lyrics, with the cover in terminals that draw images (Rex, Ghostty, kitty, WezTerm). It plays through the app, so both stay in step, and it starts the app in the background when needed.
+
+```sh
+ln -s /Applications/SwiftSpot.app/Contents/Helpers/swiftspot ~/.local/bin/swiftspot
+swiftspot          # the player; press ? for keys
+swiftspot toggle   # also next, previous, like, now
+```
+
+The app and the terminal player talk over a socket in your private temporary folder that only you can open. Nothing is served on the network.
+
+### Rex
+
+`rex/swiftspot.lua` adds SwiftSpot to [Rex](https://www.superlogical.com/rex): an "Open SwiftSpot" action that opens the player beside the current pane, and actions for play or pause, next, previous and like. Copy it beside your Rex config and load it from `~/.config/rex/init.lua`:
+
+```lua
+require("swiftspot").setup{
+  keys = { open = "cmd+shift+m", toggle = "cmd+shift+p" },
+}
+```

@@ -438,24 +438,29 @@ impl App {
     }
 
     fn push_events(&mut self, server: &crate::server::Server) {
-        let player = self.api_player();
+        let mut player = self.api_player();
         // Position moves every pass; a client counts it on from the last
         // report, so only a jump or a change of anything else is news.
         let news = match &self.api_pushed.player {
             Some((sent, at)) => {
-                let mut expected = sent.clone();
-                if sent["playing"] == true
-                    && let Some(position) = sent["position_ms"].as_u64()
-                {
-                    expected["position_ms"] = json!(position + at.elapsed().as_millis() as u64);
-                }
+                let expected = sent["position_ms"].as_u64().map(|position| {
+                    if sent["playing"] == true {
+                        position + at.elapsed().as_millis() as u64
+                    } else {
+                        position
+                    }
+                });
                 let drift = player["position_ms"]
                     .as_u64()
-                    .zip(expected["position_ms"].as_u64())
+                    .zip(expected)
                     .map_or(0, |(now, expected)| now.abs_diff(expected));
-                let mut same = player.clone();
-                same["position_ms"] = expected["position_ms"].clone();
-                same != expected || drift > 2_000
+                // Compared with the sent report's own position, the rest
+                // must match exactly.
+                let now =
+                    std::mem::replace(&mut player["position_ms"], sent["position_ms"].clone());
+                let same = player == *sent;
+                player["position_ms"] = now;
+                !same || drift > 2_000
             }
             None => true,
         };

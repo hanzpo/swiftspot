@@ -75,8 +75,8 @@ struct SongList: View {
                     columns: columns,
                     striped: track.position % 2 == 1,
                     selected: selection.contains(track.id),
-                    playing: model.player.uri == track.uri,
-                    paused: model.player.playing != true,
+                    playing: model.playingUri == track.uri,
+                    paused: !model.isPlaying,
                     source: source,
                     play: { play(track) }
                 )

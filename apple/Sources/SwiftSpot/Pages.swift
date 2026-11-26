@@ -323,9 +323,9 @@ struct SongsView: View {
         let needle = filter.trimmingCharacters(in: .whitespaces).lowercased()
         guard !needle.isEmpty else { return tracks }
         return tracks.filter {
-            $0.name.lowercased().contains(needle)
-                || $0.artistNames.lowercased().contains(needle)
-                || $0.albumName.lowercased().contains(needle)
+            $0.name.localizedCaseInsensitiveContains(needle)
+                || $0.artistNames.localizedCaseInsensitiveContains(needle)
+                || $0.albumName.localizedCaseInsensitiveContains(needle)
         }
     }
 }
@@ -450,7 +450,7 @@ struct EpisodeRow: View {
     var episode: Track
 
     var body: some View {
-        let playing = model.player.uri == episode.uri
+        let playing = model.playingUri == episode.uri
         HStack(alignment: .top, spacing: 14) {
             Artwork(url: episode.image, size: 64, radius: 6)
             VStack(alignment: .leading, spacing: 4) {
@@ -470,8 +470,8 @@ struct EpisodeRow: View {
                     Button {
                         if playing { model.toggle() } else { model.play(episode, in: nil, tracks: [episode]) }
                     } label: {
-                        Label(playing && model.player.playing == true ? "Pause" : "Play",
-                              systemImage: playing && model.player.playing == true ? "pause.fill" : "play.fill")
+                        Label(playing && model.isPlaying ? "Pause" : "Play",
+                              systemImage: playing && model.isPlaying ? "pause.fill" : "play.fill")
                     }
                     .buttonStyle(.glass)
                     .controlSize(.small)

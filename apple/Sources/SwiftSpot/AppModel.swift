@@ -66,7 +66,11 @@ final class AppModel {
 
     // MARK: Library
 
-    var playlists: [Playlist] = []
+    var playlists: [Playlist] = [] {
+        didSet { editablePlaylists = playlists.filter { $0.editable == true } }
+    }
+    /// The playlists this account may add songs to, for the song menus.
+    private(set) var editablePlaylists: [Playlist] = []
     var sidebarRows: [SidebarRow] = []
     var likedContext: String?
     /// Bumped after anything that changes what pages show, so they reload.
@@ -80,7 +84,18 @@ final class AppModel {
 
     // MARK: Player
 
-    var player = PlayerState.empty
+    var player = PlayerState.empty {
+        didSet {
+            if player.uri != playingUri { playingUri = player.uri }
+            let playing = player.playing == true
+            if playing != isPlaying { isPlaying = playing }
+        }
+    }
+    /// The playing song and whether it plays, apart from the rest of
+    /// `player`, so song rows redraw only when these change and not on
+    /// every volume or position update.
+    private(set) var playingUri: String?
+    private(set) var isPlaying = false
     /// When `player` arrived, so the position can count on between reports.
     var playerAt = Date()
     /// A seek being dragged, as a fraction.
@@ -376,7 +391,6 @@ final class AppModel {
         }
     }
 
-    var editablePlaylists: [Playlist] { playlists.filter { $0.editable == true } }
 
     // MARK: Playback
 

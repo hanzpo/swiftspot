@@ -205,7 +205,7 @@ struct CardGrid: View {
         let needle = model.findText.trimmingCharacters(in: .whitespaces).lowercased()
         guard !needle.isEmpty else { return cards }
         return cards.filter {
-            $0.name.lowercased().contains(needle) || ($0.subtitle ?? "").lowercased().contains(needle)
+            $0.name.localizedCaseInsensitiveContains(needle) || ($0.subtitle ?? "").localizedCaseInsensitiveContains(needle)
         }
     }
 

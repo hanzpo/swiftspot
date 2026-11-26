@@ -154,13 +154,8 @@ struct SettingsView: View {
     }
 
     private func load() async {
-        // Settings can open before the engine has answered.
-        for _ in 0..<40 {
-            if let next = try? await model.call("settings.get", as: SettingsState.self) {
-                state = next
-                return
-            }
-            try? await Task.sleep(for: .milliseconds(250))
+        if let next = try? await model.call("settings.get", as: SettingsState.self) {
+            state = next
         }
     }
 }

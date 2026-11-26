@@ -33,6 +33,7 @@ pub(super) struct Pushed {
     player: Option<(Value, std::time::Instant)>,
     library: u64,
     auth: u64,
+    local_playback: u64,
     queue: u64,
     jam: u64,
     lyrics: u64,
@@ -284,12 +285,6 @@ fn param_strings(params: &Value, name: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn fingerprint(parts: impl Hash) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    parts.hash(&mut hasher);
-    hasher.finish()
-}
-
 /// A song as a client describes it: enough for the row it adds to show
 /// its name, artists, album and cover before Spotify confirms it.
 fn described_track(value: &Value) -> Option<PlayableItem> {
@@ -469,20 +464,30 @@ impl App {
             self.api_pushed.player = Some((player, std::time::Instant::now()));
         }
 
+        let hello = self.api_hello();
         let auth = {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            self.user
-                .as_ref()
-                .map(|user| user.id.as_str())
-                .hash(&mut hasher);
-            std::mem::discriminant(&self.auth).hash(&mut hasher);
+            hello.to_string().hash(&mut hasher);
             hasher.finish()
         };
         if auth != self.api_pushed.auth {
             if self.api_pushed.auth != 0 {
-                server.broadcast("auth", self.api_hello());
+                server.broadcast("auth", hello);
             }
             self.api_pushed.auth = auth;
+        }
+
+        let local_playback = {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            format!("{:?}", self.local_playback).hash(&mut hasher);
+            self.local_device_id.hash(&mut hasher);
+            hasher.finish()
+        };
+        if local_playback != self.api_pushed.local_playback {
+            if self.api_pushed.local_playback != 0 {
+                server.broadcast("devices", self.api_devices());
+            }
+            self.api_pushed.local_playback = local_playback;
         }
 
         let library = {
@@ -495,13 +500,6 @@ impl App {
                     playlist.snapshot_id.hash(&mut hasher);
                 }
             }
-            // Order-independent hash over `self.saved` without cloning or sorting.
-            let mut saved_xor = 0u64;
-            for (uri, on) in &self.saved {
-                saved_xor ^= fingerprint((uri.as_str(), *on));
-            }
-            saved_xor.hash(&mut hasher);
-            self.saved.len().hash(&mut hasher);
             self.library.liked.total.hash(&mut hasher);
             self.library.albums.total.hash(&mut hasher);
             self.library.artists.items.len().hash(&mut hasher);
@@ -509,6 +507,9 @@ impl App {
             self.rootlist.len().hash(&mut hasher);
             hasher.finish()
         };
+        if !self.saved_deltas.is_empty() {
+            server.broadcast("saved", json!(std::mem::take(&mut self.saved_deltas)));
+        }
         if library != self.api_pushed.library {
             if self.api_pushed.library != 0 {
                 server.broadcast("library", Value::Null);

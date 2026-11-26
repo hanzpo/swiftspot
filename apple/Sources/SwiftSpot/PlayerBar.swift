@@ -159,6 +159,13 @@ struct VocalSlider: View {
                         dragging = nil
                     }
                 }
+                .task(id: dragging) {
+                    guard let value = dragging else { return }
+                    try? await Task.sleep(for: .seconds(2))
+                    guard !Task.isCancelled else { return }
+                    model.setVocalLevel(value, done: true)
+                    dragging = nil
+                }
                 .controlSize(.mini)
                 .frame(width: width)
             }

@@ -47,17 +47,6 @@ struct SignInView: View {
         .onChange(of: hello?.clientId) { _, saved in
             if clientId.isEmpty, let saved { clientId = saved }
         }
-        .task {
-            // The auth event says when it is done; asking keeps the page
-            // current through the browser round trip too.
-            while !Task.isCancelled, model.hello?.signedIn != true {
-                if let hello = try? await model.call("hello", as: Hello.self) {
-                    model.hello = hello
-                    if hello.signedIn { await model.refreshAll() }
-                }
-                try? await Task.sleep(for: .seconds(1))
-            }
-        }
     }
 
     private func waiting(_ hello: Hello?) -> some View {
@@ -275,13 +264,6 @@ struct AccountSettings: View {
             }
         }
         .formStyle(.grouped)
-        .task {
-            // A new app is verified after the browser hands it back.
-            while !Task.isCancelled {
-                if let hello = try? await model.call("hello", as: Hello.self) { model.hello = hello }
-                try? await Task.sleep(for: .seconds(2))
-            }
-        }
         .sheet(isPresented: $changing) {
             ChangeSpotifyApp(current: hello?.webApp ?? hello?.clientId, redirectUri: hello?.redirectUri)
         }

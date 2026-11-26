@@ -264,10 +264,7 @@ struct SongRow: View {
     var play: () -> Void = {}
 
     @State private var hovered = false
-    /// The heart as just clicked, until the list comes back with it.
-    @State private var likedNow: Bool?
-
-    private var isLiked: Bool { likedNow ?? track.saved ?? false }
+    private var isLiked: Bool { model.saved[track.uri] ?? track.saved ?? false }
 
     private var secondary: AnyShapeStyle {
         selected ? AnyShapeStyle(.white.opacity(0.85)) : AnyShapeStyle(.secondary)
@@ -330,9 +327,7 @@ struct SongRow: View {
             // Filled for a liked song, always; an outline to like one on
             // the row under the pointer.
             Button {
-                let liked = !isLiked
-                likedNow = liked
-                model.setSaved([track], liked)
+                model.setSaved([track], !isLiked)
             } label: {
                 Image(systemName: isLiked ? "heart.fill" : "heart")
             }
@@ -370,9 +365,6 @@ struct SongRow: View {
                     : striped ? AnyShapeStyle(.quinary) : AnyShapeStyle(.clear))
         }
         .onHover { hovered = $0 }
-        // The list's own answer replaces the click's guess once it comes;
-        // a like that fails changes the library, which reloads the list.
-        .onChange(of: track.saved) { likedNow = nil }
     }
 
     @ViewBuilder private var number: some View {
@@ -482,25 +474,36 @@ struct SongMenu: View {
     }
 }
 
+private nonisolated(unsafe) let fractionalISO: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+}()
+private nonisolated(unsafe) let plainISO = ISO8601DateFormatter()
+private nonisolated(unsafe) let relativeFormatter: RelativeDateTimeFormatter = {
+    let formatter = RelativeDateTimeFormatter()
+    formatter.unitsStyle = .full
+    return formatter
+}()
+private nonisolated(unsafe) let dayFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy-MM-dd"
+    return formatter
+}()
+
 func relativeDate(_ iso: String?) -> String {
     guard let iso, !iso.hasPrefix("1970") else { return "" }
-    let parser = ISO8601DateFormatter()
-    parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    guard let date = parser.date(from: iso) ?? ISO8601DateFormatter().date(from: iso) else { return "" }
+    guard let date = fractionalISO.date(from: iso) ?? plainISO.date(from: iso) else { return "" }
     let age = Date().timeIntervalSince(date)
     if age < 60 * 60 * 24 * 30 {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .full
-        return formatter.localizedString(for: date, relativeTo: Date())
+        return relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
     return date.formatted(date: .abbreviated, time: .omitted)
 }
 
 func shortDate(_ text: String?) -> String {
     guard let text, !text.isEmpty else { return "" }
-    let formatter = DateFormatter()
-    formatter.dateFormat = "yyyy-MM-dd"
-    if let date = formatter.date(from: text) {
+    if let date = dayFormatter.date(from: text) {
         return date.formatted(date: .abbreviated, time: .omitted)
     }
     return text

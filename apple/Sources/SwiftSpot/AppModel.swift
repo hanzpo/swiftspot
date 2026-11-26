@@ -106,21 +106,34 @@ final class AppModel {
 
     // MARK: Sleep timer
 
-    /// When playback pauses on its own, if a sleep timer is set.
-    var sleepAt: Date?
-    /// Pause at the end of the song playing when the timer was set.
-    var sleepAfterSong: String?
+    enum SleepTimer: Equatable {
+        case off
+        /// Pauses at this time.
+        case at(Date)
+        /// Pauses when this song gives way to another.
+        case afterSong(String)
+    }
+
+    var sleepTimer = SleepTimer.off
     private var sleepTask: Task<Void, Never>?
+
+    var sleepAt: Date? {
+        if case .at(let date) = sleepTimer { date } else { nil }
+    }
 
     func setSleepTimer(minutes: Int?) {
         sleepTask?.cancel()
-        sleepAfterSong = nil
-        sleepAt = minutes.map { Date().addingTimeInterval(TimeInterval($0 * 60)) }
-        guard let at = sleepAt else { return }
+        sleepTask = nil
+        guard let minutes else {
+            sleepTimer = .off
+            return
+        }
+        let at = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        sleepTimer = .at(at)
         sleepTask = Task {
             try? await Task.sleep(for: .seconds(at.timeIntervalSinceNow))
             guard !Task.isCancelled else { return }
-            sleepAt = nil
+            sleepTimer = .off
             if player.playing == true { toggle() }
         }
         show("Sleep timer set")
@@ -128,14 +141,15 @@ final class AppModel {
 
     func sleepAtEndOfSong() {
         sleepTask?.cancel()
-        sleepAt = nil
-        sleepAfterSong = player.uri
+        sleepTask = nil
+        guard let uri = player.uri else { return }
+        sleepTimer = .afterSong(uri)
         show("Pausing after this song")
     }
 
     /// Pauses as soon as the song the timer was set on gives way to another.
     private func checkSleepAfterSong(_ state: PlayerState) {
-        guard let song = sleepAfterSong else { return }
+        guard case .afterSong(let song) = sleepTimer else { return }
         let duration = player.durationMs ?? 0
         let looped = state.uri == song
             && state.repeat == "track"
@@ -143,7 +157,7 @@ final class AppModel {
             && duration > 5000
             && position(at: Date()) > duration - 5000
         guard state.uri != song || looped else { return }
-        sleepAfterSong = nil
+        sleepTimer = .off
         if state.playing == true { toggle() }
     }
 
@@ -255,17 +269,26 @@ final class AppModel {
                 let changedSong = state.uri != player.uri
                 setPlayer(state)
                 if changedSong {
-                    Task {
-                        if panel == .queue { await loadQueue() }
-                        if panel == .lyrics { await loadLyrics() }
-                    }
+                    if panel == .queue { reloadQueue() }
+                    if panel == .lyrics { reloadLyrics() }
                 }
             }
         case "auth":
-            Task {
-                guard let client else { return }
-                hello = try? await client.call("hello", as: Hello.self)
-                if hello?.signedIn == true { await refreshAll() }
+            if let next = try? JSONDecoder.api.decode(Hello.self, from: data) {
+                if next.user?.id != hello?.user?.id { saved = [:] }
+                let signedIn = next.signedIn && hello?.signedIn != true
+                hello = next
+                if signedIn { Task { await refreshAll() } }
+            }
+        case "devices":
+            if let state = try? JSONDecoder.api.decode(DevicesState.self, from: data) {
+                devices = state.devices
+                localPlayback = state.localPlayback
+                localPlaybackError = state.localError
+            }
+        case "saved":
+            if let changes = try? JSONDecoder().decode([String: Bool].self, from: data) {
+                saved.merge(changes) { _, new in new }
             }
         case "library":
             notifyPageWaiters("library")
@@ -281,13 +304,13 @@ final class AppModel {
             }
         case "queue":
             notifyPageWaiters("queue")
-            if panel == .queue { Task { await loadQueue() } }
+            if panel == .queue { reloadQueue() }
         case "jam":
-            Task { await loadJam() }
+            reloadJam()
         case "lyrics":
             notifyPageWaiters("lyrics")
             // Words placed in the song: a lyrics view shows them sung.
-            if lyrics != nil { Task { await loadLyrics() } }
+            if lyrics != nil { reloadLyrics() }
         case "toast":
             struct Message: Decodable { var message: String }
             if let toast = try? JSONDecoder.api.decode(Message.self, from: data) {
@@ -401,12 +424,16 @@ final class AppModel {
         confirmPlayer()
     }
 
+    private var confirmTask: Task<Void, Never>?
+
     /// Asks for the player once the engine has had time to act, so a play
     /// that failed, and sent no news, does not leave its guess on show.
     private func confirmPlayer() {
-        Task {
+        confirmTask?.cancel()
+        confirmTask = Task {
             try? await Task.sleep(for: .seconds(2.5))
-            if let state = try? await call("player.state", as: PlayerState.self) {
+            guard !Task.isCancelled else { return }
+            if let state = try? await call("player.state", as: PlayerState.self), !Task.isCancelled {
                 setPlayer(state)
             }
         }
@@ -459,19 +486,24 @@ final class AppModel {
         send("player.repeat", ["mode": next])
     }
 
+    /// Whether each song or item is saved, as the engine last pushed it or
+    /// as just clicked, ahead of the page's own copy.
+    var saved: [String: Bool] = [:]
+
     /// Saves songs to Liked Songs, or takes them out.
     func setSaved(_ tracks: [Track], _ saved: Bool) {
         if tracks.contains(where: { $0.uri == player.uri }) { player.saved = saved }
+        for track in tracks { self.saved[track.uri] = saved }
         send(
             "library.set", ["uris": tracks.map(\.uri), "saved": saved],
             done: saved ? "Added to Liked Songs" : "Removed from Liked Songs")
-        revision += 1
     }
 
     func toggleSaved(_ uri: String) {
-        if uri == player.uri { player.saved = !(player.saved ?? false) }
+        let now = !(player.uri == uri ? player.saved ?? false : saved[uri] ?? false)
+        if uri == player.uri { player.saved = now }
+        saved[uri] = now
         send("library.toggle", ["uri": uri])
-        revision += 1
     }
 
     func seek(to fraction: Double) {
@@ -528,15 +560,34 @@ final class AppModel {
 
     func togglePanel(_ panel: Panel) {
         self.panel = self.panel == panel ? nil : panel
-        Task {
-            if self.panel == .queue { await loadQueue() }
-            if self.panel == .lyrics { await loadLyrics() }
-        }
+        if self.panel == .queue { reloadQueue() }
+        if self.panel == .lyrics { reloadLyrics() }
+    }
+
+    private var queueTask: Task<Void, Never>?
+    private var lyricsTask: Task<Void, Never>?
+    private var jamTask: Task<Void, Never>?
+
+    /// Loads the queue again, dropping a load still running, so an older
+    /// answer never lands on top of a newer one.
+    func reloadQueue() {
+        queueTask?.cancel()
+        queueTask = Task { await loadQueue() }
+    }
+
+    func reloadLyrics() {
+        lyricsTask?.cancel()
+        lyricsTask = Task { await loadLyrics() }
+    }
+
+    func reloadJam() {
+        jamTask?.cancel()
+        jamTask = Task { await loadJam() }
     }
 
     func loadQueue() async {
         for _ in 0..<120 {
-            guard let state = try? await call("queue.get", as: QueueState.self) else { return }
+            guard let state = try? await call("queue.get", as: QueueState.self), !Task.isCancelled else { return }
             queue = state
             if !state.loading { return }
             await waitForPage(["queue"], timeout: .seconds(3))
@@ -549,12 +600,12 @@ final class AppModel {
             "queue.add",
             ["songs": tracks.map { ["uri": $0.uri, "name": $0.name] }],
             done: tracks.count == 1 ? "Added to queue" : "Added \(tracks.count) songs to queue")
-        if panel == .queue { Task { try? await Task.sleep(for: .milliseconds(400)); await loadQueue() } }
+        if panel == .queue { reloadQueue() }
     }
 
     func playQueued(at index: Int, queued: Bool) {
         send("queue.play", ["index": index, "queued": queued])
-        Task { try? await Task.sleep(for: .milliseconds(400)); await loadQueue() }
+        reloadQueue()
     }
 
     /// Moves a song queued by hand; `to` is the row it goes before.
@@ -584,7 +635,7 @@ final class AppModel {
 
     func loadLyrics() async {
         for attempt in 0..<120 {
-            guard let state = try? await call("lyrics.get", as: LyricsState.self) else { return }
+            guard let state = try? await call("lyrics.get", as: LyricsState.self), !Task.isCancelled else { return }
             lyrics = state
             // A song just played here is shown before the engine has moved
             // to it, and its answer can still be the last song's: ask
@@ -614,14 +665,6 @@ final class AppModel {
     func enablePlayback() {
         localPlayback = "authorizing"
         send("auth.enable_playback")
-        Task {
-            // The browser round trip takes a while; keep the list current.
-            for _ in 0..<90 {
-                try? await Task.sleep(for: .seconds(2))
-                await loadDevices()
-                if localPlayback == "ready" || localPlayback == "failed" { return }
-            }
-        }
     }
 
     func transfer(to device: Device) {
@@ -633,7 +676,7 @@ final class AppModel {
 
     func loadJam() async {
         let waiting = jam?.busy == true && jam?.jam == nil
-        guard let state = try? await call("jam.get", as: JamState.self) else { return }
+        guard let state = try? await call("jam.get", as: JamState.self), !Task.isCancelled else { return }
         jam = state
         if waiting, state.jam != nil, panel != .queue {
             panel = .queue

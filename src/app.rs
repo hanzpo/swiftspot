@@ -633,8 +633,6 @@ pub struct App {
     pub(crate) karaoke_model: KaraokeModelState,
     /// Explicit Jam state (active session, busy flag, pending invitation).
     pub(crate) jam_state: JamState,
-    /// Monotonic counter incremented whenever `self.saved` mutates.
-    pub(crate) saved_generation: u64,
     /// URI -> saved state deltas accumulated since the last API push.
     pub(crate) saved_deltas: HashMap<String, bool>,
 }
@@ -967,7 +965,6 @@ impl App {
             karaoke,
             karaoke_model: KaraokeModelState::Idle,
             jam_state: JamState::default(),
-            saved_generation: 0,
             saved_deltas: HashMap::new(),
         };
         app.local.volume = app.settings.volume;
@@ -1112,7 +1109,6 @@ impl App {
     fn record_saved(&mut self, uri: String, saved: bool) {
         let changed = self.saved.insert(uri.clone(), saved) != Some(saved);
         if changed {
-            self.saved_generation = self.saved_generation.wrapping_add(1);
             self.saved_deltas.insert(uri, saved);
         }
     }
@@ -2214,7 +2210,6 @@ impl App {
         self.playlist_headers_requested.clear();
         self.confirmed_ep_albums.clear();
         self.saved.clear();
-        self.saved_generation = self.saved_generation.wrapping_add(1);
         self.saved_deltas.clear();
         self.saved_pending.clear();
         self.track_recordings.clear();
@@ -10652,6 +10647,54 @@ mod engine_tests {
             event["event"] == "page" && event["data"]["page"] == "devices"
         });
         assert!(saw_page, "expected a pushed page event for devices");
+
+        app.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn engine_pushes_only_the_saved_flags_that_changed() {
+        let dir = std::env::temp_dir().join(format!("ss-sv-{:08x}", rand::random::<u32>()));
+        let dirs = AppDirs {
+            config: dir.join("config"),
+            state: dir.join("state"),
+            cache: dir.join("cache"),
+        };
+        let _ = dirs.ensure();
+        let waker = Waker::default();
+        let mut app = App::new(
+            &waker,
+            dirs,
+            Settings::default(),
+            AppOptions {
+                media_controls: false,
+                restore_sign_in: false,
+                tray: false,
+            },
+        );
+        app.auth = AuthStatus::SignedOut;
+        let (_inbox, messages) = app.connect_front_end(&waker);
+        app.engine_step(&waker);
+        while messages.try_recv().is_ok() {}
+
+        app.record_saved("spotify:track:a".into(), true);
+        app.record_saved("spotify:track:a".into(), true);
+        app.engine_step(&waker);
+        let events: Vec<serde_json::Value> = messages
+            .try_iter()
+            .map(|line| serde_json::from_str::<serde_json::Value>(&line).unwrap())
+            .collect();
+        let saved: Vec<_> = events.iter().filter(|e| e["event"] == "saved").collect();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(
+            saved[0]["data"],
+            serde_json::json!({ "spotify:track:a": true })
+        );
+        assert!(
+            !events.iter().any(|e| e["event"] == "library"),
+            "a saved flag alone must not reload the library"
+        );
 
         app.shutdown();
         let _ = std::fs::remove_dir_all(&dir);

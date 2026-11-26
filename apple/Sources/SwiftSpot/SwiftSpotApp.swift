@@ -99,13 +99,13 @@ struct SwiftSpotApp: App {
                     .keyboardShortcut("r")
                 Divider()
                 Menu("Sleep Timer") {
-                    Button(model.sleepAt == nil && model.sleepAfterSong == nil ? "✓ Off" : "Off") {
+                    Button(model.sleepTimer == .off ? "✓ Off" : "Off") {
                         model.setSleepTimer(minutes: nil)
                     }
                     ForEach([15, 30, 45, 60, 90], id: \.self) { minutes in
                         Button("\(minutes) Minutes") { model.setSleepTimer(minutes: minutes) }
                     }
-                    Button(model.sleepAfterSong != nil ? "✓ End of Song" : "End of Song") {
+                    Button({ if case .afterSong = model.sleepTimer { "✓ End of Song" } else { "End of Song" } }()) {
                         model.sleepAtEndOfSong()
                     }
                     .disabled(!model.player.hasSong)

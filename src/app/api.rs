@@ -258,6 +258,33 @@ fn param_str<'a>(params: &'a Value, name: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("missing \"{name}\""))
 }
 
+/// Leaves out the song rows a client already has. A client that holds the
+/// first `from` rows, the last of them `after`, gets only the rows past
+/// them and `"from": from`. When the list no longer starts with those rows
+/// the whole list goes, with `"from": 0`, and the client starts over.
+fn skip_known_rows(value: &mut Value, params: &Value) {
+    let (Some(from), Some(after)) = (
+        params.get("from").and_then(Value::as_u64),
+        params.get("after").and_then(Value::as_str),
+    ) else {
+        return;
+    };
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+    let Some(Value::Array(tracks)) = object.get_mut("tracks") else {
+        return;
+    };
+    let from = usize::try_from(from).unwrap_or(usize::MAX);
+    let kept = from > 0
+        && from <= tracks.len()
+        && tracks[from - 1].get("uri").and_then(Value::as_str) == Some(after);
+    if kept {
+        tracks.drain(..from);
+    }
+    object.insert("from".into(), json!(if kept { from } else { 0 }));
+}
+
 fn param_u64(params: &Value, name: &str) -> Result<u64, String> {
     params
         .get(name)
@@ -405,6 +432,7 @@ impl App {
             }
             let mut result = self.answer(&request);
             if let Ok(value) = &mut result {
+                skip_known_rows(value, &request.params);
                 self.mark_saved(value);
             }
             server.reply(&request, result);
@@ -2451,5 +2479,47 @@ impl App {
         }
         self.actions.push(Action::SettingsChanged);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn page(uris: &[&str]) -> Value {
+        json!({
+            "title": "Mix",
+            "tracks": uris.iter().map(|uri| json!({ "uri": uri })).collect::<Vec<_>>(),
+        })
+    }
+
+    #[test]
+    fn a_client_gets_only_the_rows_after_the_ones_it_has() {
+        let mut value = page(&["a", "b", "c", "d"]);
+        skip_known_rows(&mut value, &json!({ "from": 2, "after": "b" }));
+        assert_eq!(value["from"], 2);
+        assert_eq!(value["title"], "Mix");
+        assert_eq!(value["tracks"], json!([{ "uri": "c" }, { "uri": "d" }]));
+    }
+
+    #[test]
+    fn a_list_that_changed_under_the_client_goes_whole() {
+        let mut value = page(&["a", "x", "c"]);
+        skip_known_rows(&mut value, &json!({ "from": 2, "after": "b" }));
+        assert_eq!(value["from"], 0);
+        assert_eq!(value["tracks"].as_array().unwrap().len(), 3);
+
+        let mut shorter = page(&["a"]);
+        skip_known_rows(&mut shorter, &json!({ "from": 2, "after": "b" }));
+        assert_eq!(shorter["from"], 0);
+        assert_eq!(shorter["tracks"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_request_without_rows_known_is_answered_whole() {
+        let mut value = page(&["a", "b"]);
+        skip_known_rows(&mut value, &json!({ "id": "pl" }));
+        assert!(value.get("from").is_none());
+        assert_eq!(value["tracks"].as_array().unwrap().len(), 2);
     }
 }

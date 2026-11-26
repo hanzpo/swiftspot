@@ -73,5 +73,12 @@ A line's `words`, once placed, are its words with `marks`: when each
 character starts, in milliseconds, and when the word ends.
 
 Lists SwiftSpot is still fetching answer with `"loading": true`; ask again.
+
+A request for a page with song rows (`tracks`) may also carry `from`, the
+number of rows the app already holds, and `after`, the URI of the last of
+them. When the list still starts with those rows, the answer carries only
+the rows past them and `"from": from`; otherwise it carries the whole list
+and `"from": 0`. The app asks this way while a long list loads, so each new
+page of rows costs only its own rows.
 The handlers are in `src/app/api.rs`: each reads SwiftSpot's state or queues
 the same action its window would, so the app gets the old window's behaviour.

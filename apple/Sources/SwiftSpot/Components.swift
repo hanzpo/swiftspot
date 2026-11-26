@@ -31,10 +31,15 @@ struct Loader<Value: Decodable & Sendable, Content: View>: View {
     @State private var value: Value?
     @State private var failure: String?
     @State private var generation = 0
+    /// The page and revision `value` answers, so a newer load of the same
+    /// page asks only for the rows past those it has.
+    @State private var loadedBase: String?
 
-    private var key: String {
-        "\(method)|\(params.sorted { $0.key < $1.key })|\(model.revision)|\(generation)"
+    private var base: String {
+        "\(method)|\(params.sorted { $0.key < $1.key })|\(model.revision)"
     }
+
+    private var key: String { "\(base)|\(generation)" }
 
     var body: some View {
         Group {
@@ -55,8 +60,19 @@ struct Loader<Value: Decodable & Sendable, Content: View>: View {
         let waitKeys = pageEventKeys
         for _ in 0..<120 {
             do {
-                let next = try await model.call(method, params, as: Value.self)
+                var request: [String: Any] = params
+                let held = loadedBase == base ? (value as? any RowPage)?.rows : nil
+                if let held, let last = held.last {
+                    request["from"] = held.count
+                    request["after"] = last.uri
+                }
+                var next = try await model.call(method, request, as: Value.self)
+                if Task.isCancelled { return }
+                if let earlier = value, loadedBase == base {
+                    next = Self.merge(next, onto: earlier)
+                }
                 value = next
+                loadedBase = base
                 failure = nil
                 if !loading(next) { return }
             } catch {
@@ -78,6 +94,16 @@ struct Loader<Value: Decodable & Sendable, Content: View>: View {
             await model.waitForPage(waitKeys, timeout: .seconds(2))
             if !Task.isCancelled { generation += 1 }
         }
+    }
+
+    private static func merge(_ next: Value, onto earlier: Value) -> Value {
+        guard let page = next as? any RowPage else { return next }
+        return Self.appended(page, onto: earlier) ?? next
+    }
+
+    private static func appended<Page: RowPage>(_ page: Page, onto earlier: Value) -> Value? {
+        guard let earlier = earlier as? Page else { return nil }
+        return page.appended(to: earlier) as? Value
     }
 
     private var pageEventKeys: Set<String> {

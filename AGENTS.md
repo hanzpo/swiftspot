@@ -178,7 +178,8 @@ A release is not the tag alone. Do these in order:
    title `SwiftSpot VERSION`, the written notes and the zip. Never publish
    generated placeholder notes.
 4. Update `Casks/swiftspot.rb` in `hanzpo/homebrew-tap`: the version and the
-   zip's SHA-256. Check that `brew install hanzpo/tap/swiftspot` installs it.
+   zip's SHA-256. The cask links the terminal client with
+   `binary "#{appdir}/SwiftSpot.app/Contents/Helpers/swiftspot"`. Check that `brew install hanzpo/tap/swiftspot` installs it.
 
 Before writing release notes, read the previous two stable releases and match
 their style. Start with a short plain-language summary, use `New` and `Fixed`

@@ -7,6 +7,7 @@
 # The app is one process: the SwiftUI front end with SwiftSpot's Rust
 # engine, which keeps the Spotify session and plays the audio, linked in
 # as a static library (src/ffi.rs). The app is com.hanzpo.swiftspot.
+# The terminal client (tui/) goes in Contents/Helpers/swiftspot.
 #
 # The icon is SwiftSpot's own, Packaging/AppIcon.svg, rendered to
 # Packaging/AppIcon-1024.png by Packaging/render-icon.swift; set ICON to
@@ -45,7 +46,7 @@ if [ -z "${ICON:-}" ]; then
     iconutil -c icns "$iconset" -o "$ICON"
 fi
 
-(cd "$root" && cargo build --release --locked --lib)
+(cd "$root" && cargo build --release --locked --lib && cargo build --release --locked -p swiftspot-tui)
 (cd "$here" && swift build -c release)
 bundle="$here/.build/SwiftSpot.app"
 rm -rf "$bundle"
@@ -53,6 +54,9 @@ mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp "$(cd "$here" && swift build -c release --show-bin-path)/SwiftSpot" "$bundle/Contents/MacOS/SwiftSpot"
 sed "s/__VERSION__/$version/g" "$here/Packaging/Info.plist" > "$bundle/Contents/Info.plist"
 cp "$ICON" "$bundle/Contents/Resources/AppIcon.icns"
+mkdir -p "$bundle/Contents/Helpers"
+cp "$root/target/release/swiftspot" "$bundle/Contents/Helpers/swiftspot"
+"${sign[@]}" "$bundle/Contents/Helpers/swiftspot"
 "${sign[@]}" "$bundle"
 codesign --verify --deep --strict "$bundle"
 

@@ -1,18 +1,18 @@
-//! SwiftSpot's internals, exposed so diagnostics and tests can reach them.
+//! SwiftSpot's Rust playback, Spotify API, and library core.
+//!
+//! Exposed both as a Rust library (`rlib`) for unit tests and as a static
+//! library (`libswiftspot.a`) with a C FFI (`crate::ffi`) embedded directly
+//! into the native macOS SwiftUI application.
 
 pub mod api;
 pub mod app;
-#[cfg(target_os = "linux")]
-pub mod appearance;
 pub mod auth;
-pub mod autoscroll;
 pub mod backend;
-pub mod bidi;
 pub mod credentials;
-#[cfg(any(test, feature = "demo"))]
-pub mod demo;
-pub mod emoji;
 pub mod eq;
+#[cfg(unix)]
+pub mod ffi;
+pub mod file_writer;
 pub mod history;
 pub mod home_cache;
 pub mod http;
@@ -24,20 +24,7 @@ pub mod liked;
 pub mod limiter;
 pub mod link;
 pub mod lyrics;
-#[cfg(target_os = "macos")]
-pub mod mac_glass;
-#[cfg(target_os = "macos")]
-pub mod mac_links;
-#[cfg(target_os = "macos")]
-pub mod mac_menu;
-#[cfg(target_os = "macos")]
-pub mod mac_notch;
-#[cfg(target_os = "macos")]
-pub mod mac_player;
-#[cfg(target_os = "macos")]
-pub mod mac_touchbar_crash_guard;
 pub mod model;
-pub mod notch;
 pub mod opener;
 pub mod pathfinder;
 pub mod paths;
@@ -50,10 +37,6 @@ pub mod session_reads;
 pub mod settings;
 pub mod single_instance;
 pub mod sink;
-pub mod theme;
-pub mod thumbbar;
-pub mod ui;
 pub mod util;
-pub mod window;
 pub mod words;
 pub mod zeroconf;

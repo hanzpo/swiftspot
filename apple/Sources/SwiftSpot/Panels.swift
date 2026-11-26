@@ -131,11 +131,11 @@ struct HistoryList: View {
     }
 
     private func load() async {
-        for attempt in 0..<600 {
+        for _ in 0..<120 {
             guard let next = try? await model.call("library.recent", as: RecentPlays.self) else { return }
             plays = next
             if !next.loading { return }
-            try? await Task.sleep(for: pollDelay(attempt))
+            await model.waitForPage(["recent"], timeout: .seconds(5))
             if Task.isCancelled { return }
         }
     }
@@ -143,8 +143,8 @@ struct HistoryList: View {
     /// Waits for the next page of plays: the engine says it is loading only
     /// while it has none, so wait for more rows, or for there to be no more.
     private func loadMore(after count: Int) async {
-        for attempt in 0..<60 {
-            try? await Task.sleep(for: pollDelay(attempt))
+        for _ in 0..<20 {
+            await model.waitForPage(["recent"], timeout: .seconds(2))
             if Task.isCancelled { return }
             guard let next = try? await model.call("library.recent", as: RecentPlays.self) else { return }
             plays = next
@@ -271,8 +271,8 @@ struct LyricsView: View {
                 }
             }
             if let lyrics, !lyrics.lines.isEmpty, lyrics.uri == model.player.uri {
-                TimelineView(.periodic(from: .now, by: 0.25)) { context in
-                    let position = model.position(at: context.date)
+                PlaybackClock(interval: 0.25) { now in
+                    let position = model.position(at: now)
                     let active = lyrics.synced ? activeLine(lyrics.lines, at: position) : nil
                     ScrollViewReader { proxy in
                         ScrollView {
@@ -352,7 +352,7 @@ struct SungLine: View {
     var words: [LyricWord]
 
     var body: some View {
-        TimelineView(.animation) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: model.player.playing != true)) { context in
             words.enumerated().reduce(Text("")) { line, item in
                 let (index, word) = item
                 let spoken = Text(word.text).customAttribute(WordMarks(marks: word.marks))
@@ -594,10 +594,10 @@ struct NowPlayingView: View {
                                 .lineLimit(1)
                         }
                         .frame(width: art)
-                        TimelineView(.periodic(from: .now, by: 0.5)) { context in
+                        PlaybackClock(interval: 0.5) { now in
                             let duration = max(player.durationMs ?? 0, 1)
                             let position = model.scrubbing.map { Int($0 * Double(duration)) }
-                                ?? model.position(at: context.date)
+                                ?? model.position(at: now)
                             VStack(spacing: 4) {
                                 SeekLine(fraction: Double(position) / Double(duration))
                                 HStack {
@@ -717,9 +717,9 @@ struct MiniPlayer: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                TimelineView(.periodic(from: .now, by: 0.5)) { context in
+                PlaybackClock(interval: 0.5) { now in
                     let duration = max(player.durationMs ?? 0, 1)
-                    SeekLine(fraction: Double(model.position(at: context.date)) / Double(duration))
+                    SeekLine(fraction: Double(model.position(at: now)) / Double(duration))
                 }
             }
             .padding(.horizontal, 16)

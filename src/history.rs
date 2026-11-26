@@ -58,6 +58,21 @@ impl History {
         self.plays.is_empty()
     }
 
+    /// Queues a durable write of the play history off the calling thread if it
+    /// changed since the last save.
+    pub fn save_with(&mut self, writer: &crate::file_writer::FileWriter, path: std::path::PathBuf) {
+        if !self.dirty {
+            return;
+        }
+        match serde_json::to_string(&self.plays) {
+            Ok(text) => {
+                writer.write(path, text.into_bytes());
+                self.dirty = false;
+            }
+            Err(error) => log::warn!("could not encode the play history: {error}"),
+        }
+    }
+
     /// Writes the history if it changed since the last save. A write that
     /// fails leaves it to be written by the next save.
     pub fn save(&mut self, path: &Path) {

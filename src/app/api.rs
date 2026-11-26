@@ -37,10 +37,69 @@ pub(super) struct Pushed {
     jam: u64,
     lyrics: u64,
     toast: Option<std::time::Instant>,
+    /// Pages or surfaces whose backend fetch settled since the last broadcast.
+    dirty_pages: std::collections::HashSet<String>,
     /// When a client last carried the playlists on past a failed page:
     /// clients ask every moment while a list is loading, and each retry
     /// into a rate limit only lengthens it.
     playlists_resumed: Option<std::time::Instant>,
+}
+
+/// Which client-facing page key an incoming [`crate::backend::ApiResponse`]
+/// updates, so the API can push a lightweight `page` event instead of making
+/// clients poll while data loads.
+pub(super) fn page_for_response(response: &crate::backend::ApiResponse) -> Option<String> {
+    use crate::backend::ApiResponse;
+    match response {
+        ApiResponse::Devices(_) => Some("devices".into()),
+        ApiResponse::RecentlyPlayed { .. } => Some("recent".into()),
+        ApiResponse::TopTracks { .. } => Some("top_songs".into()),
+        ApiResponse::TopArtists { .. }
+        | ApiResponse::SpotifyHome { .. }
+        | ApiResponse::Recommendations { .. }
+        | ApiResponse::Discover { .. }
+        | ApiResponse::HomeEpisodes { .. } => Some("home".into()),
+        ApiResponse::MyPlaylists { .. } => Some("playlists".into()),
+        ApiResponse::Playlist { id, .. }
+        | ApiResponse::PlaylistItems { id, .. }
+        | ApiResponse::PlaylistSample { id, .. }
+        | ApiResponse::PlaylistUpdated { id, .. }
+        | ApiResponse::PlaylistItemsChanged { id, .. }
+        | ApiResponse::PlaylistFollowChanged { id, .. }
+        | ApiResponse::PlaylistCoverUploaded { id, .. } => Some(format!("playlist:{id}")),
+        ApiResponse::SavedTracks { .. } => Some("liked".into()),
+        ApiResponse::SavedAlbums { .. } => Some("albums".into()),
+        ApiResponse::FollowedArtists { .. } => Some("artists".into()),
+        ApiResponse::SavedShows { .. } => Some("podcasts".into()),
+        ApiResponse::SavedEpisodes { .. } => Some("episodes".into()),
+        ApiResponse::Search { .. } | ApiResponse::SearchPlaylists { .. } => Some("search".into()),
+        ApiResponse::Artist { id, .. }
+        | ApiResponse::ArtistTopTracks { id, .. }
+        | ApiResponse::ArtistAlbums { id, .. }
+        | ApiResponse::RelatedArtists { id, .. } => Some(format!("artist:{id}")),
+        ApiResponse::Album { id, .. } | ApiResponse::AlbumTracks { id, .. } => {
+            Some(format!("album:{id}"))
+        }
+        ApiResponse::Show { id, .. } | ApiResponse::ShowEpisodes { id, .. } => {
+            Some(format!("show:{id}"))
+        }
+        _ => None,
+    }
+}
+
+/// Which client-facing page key a non-Web-API [`crate::backend::Event`] updates.
+pub(super) fn page_for_event(event: &crate::backend::Event) -> Option<String> {
+    use crate::backend::Event;
+    match event {
+        Event::Receivers(_) => Some("devices".into()),
+        Event::PlaylistCache { id, .. } => Some(format!("playlist:{id}")),
+        Event::LikedSongsCache { .. } => Some("liked".into()),
+        Event::HomeCache { .. } => Some("home".into()),
+        Event::UserProfile { id, .. } => Some(format!("user:{id}")),
+        Event::Radio { seed, .. } => Some(format!("radio:{seed}")),
+        Event::PlaylistHeader(_) => Some("playlists".into()),
+        _ => None,
+    }
 }
 
 fn artists(artists: &[ArtistRef]) -> Value {
@@ -322,12 +381,10 @@ fn items_from_uris(uris: &[String]) -> Vec<PlayableItem> {
 }
 
 impl App {
-    /// Answers the API's requests and tells its clients what changed.
-    /// Runs with the app's logic, before the queued actions apply.
+    /// Answers the API's requests. Runs with the app's logic, before the
+    /// queued actions apply; call [`Self::push_api_events`] after events and
+    /// actions have settled so clients receive updates on the same pass.
     pub(super) fn serve_api(&mut self) {
-        if crate::server::parent_gone() && !self.quit_requested {
-            self.actions.push(Action::Quit);
-        }
         let Some(server) = self.api.take() else {
             return;
         };
@@ -357,6 +414,26 @@ impl App {
             }
             server.reply(&request, result);
         }
+        self.api = Some(server);
+    }
+
+    /// Records that `page` received new backend state so connected clients are
+    /// notified on the next push pass without polling.
+    pub(super) fn note_api_page(&mut self, page: String) {
+        if self
+            .api
+            .as_ref()
+            .is_some_and(crate::server::Server::has_clients)
+        {
+            self.api_pushed.dirty_pages.insert(page);
+        }
+    }
+
+    /// Broadcasts any state changes to connected API clients.
+    pub(super) fn push_api_events(&mut self) {
+        let Some(server) = self.api.take() else {
+            return;
+        };
         if server.has_clients() {
             self.push_events(&server);
         } else {
@@ -392,10 +469,15 @@ impl App {
             self.api_pushed.player = Some((player, std::time::Instant::now()));
         }
 
-        let auth = fingerprint((
-            self.user.as_ref().map(|user| user.id.clone()),
-            format!("{:?}", std::mem::discriminant(&self.auth)),
-        ));
+        let auth = {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            self.user
+                .as_ref()
+                .map(|user| user.id.as_str())
+                .hash(&mut hasher);
+            std::mem::discriminant(&self.auth).hash(&mut hasher);
+            hasher.finish()
+        };
         if auth != self.api_pushed.auth {
             if self.api_pushed.auth != 0 {
                 server.broadcast("auth", self.api_hello());
@@ -403,37 +485,30 @@ impl App {
             self.api_pushed.auth = auth;
         }
 
-        let playlists = self
-            .library
-            .playlists
-            .get()
-            .map(|list| {
-                list.iter()
-                    .map(|playlist| {
-                        (
-                            playlist.id.clone(),
-                            playlist.name.clone(),
-                            playlist.snapshot_id.clone(),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        let mut saved: Vec<_> = self
-            .saved
-            .iter()
-            .map(|(uri, on)| (uri.clone(), *on))
-            .collect();
-        saved.sort();
-        let library = fingerprint((
-            playlists,
-            saved,
-            self.library.liked.total,
-            self.library.albums.total,
-            self.library.artists.items.len(),
-            self.library.shows.total,
-            self.rootlist.len(),
-        ));
+        let library = {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            if let Some(list) = self.library.playlists.get() {
+                list.len().hash(&mut hasher);
+                for playlist in list {
+                    playlist.id.hash(&mut hasher);
+                    playlist.name.hash(&mut hasher);
+                    playlist.snapshot_id.hash(&mut hasher);
+                }
+            }
+            // Order-independent hash over `self.saved` without cloning or sorting.
+            let mut saved_xor = 0u64;
+            for (uri, on) in &self.saved {
+                saved_xor ^= fingerprint((uri.as_str(), *on));
+            }
+            saved_xor.hash(&mut hasher);
+            self.saved.len().hash(&mut hasher);
+            self.library.liked.total.hash(&mut hasher);
+            self.library.albums.total.hash(&mut hasher);
+            self.library.artists.items.len().hash(&mut hasher);
+            self.library.shows.total.hash(&mut hasher);
+            self.rootlist.len().hash(&mut hasher);
+            hasher.finish()
+        };
         if library != self.api_pushed.library {
             if self.api_pushed.library != 0 {
                 server.broadcast("library", Value::Null);
@@ -441,13 +516,17 @@ impl App {
             self.api_pushed.library = library;
         }
 
-        let queue = fingerprint(self.queue.get().map(|queue| {
-            queue
-                .queue
-                .iter()
-                .map(|item| item.uri().to_string())
-                .collect::<Vec<_>>()
-        }));
+        let queue = {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            if let Some(queue) = self.queue.get() {
+                queue.queue.len().hash(&mut hasher);
+                for item in &queue.queue {
+                    item.uri().hash(&mut hasher);
+                }
+            }
+            self.queue.is_loading().hash(&mut hasher);
+            hasher.finish()
+        };
         if queue != self.api_pushed.queue {
             if self.api_pushed.queue != 0 {
                 server.broadcast("queue", Value::Null);
@@ -455,7 +534,30 @@ impl App {
             self.api_pushed.queue = queue;
         }
 
-        let jam = fingerprint(self.api_jam().to_string());
+        let jam = {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            self.jam_state.busy.hash(&mut hasher);
+            if let Some(jam) = &self.jam_state.active {
+                jam.id.hash(&mut hasher);
+                jam.token.hash(&mut hasher);
+                jam.hosting.hash(&mut hasher);
+                jam.can_remove.hash(&mut hasher);
+                jam.owner_id.hash(&mut hasher);
+                jam.members.len().hash(&mut hasher);
+                for member in &jam.members {
+                    member.id.hash(&mut hasher);
+                    member.name.hash(&mut hasher);
+                    member.image.hash(&mut hasher);
+                    member.you.hash(&mut hasher);
+                }
+            }
+            if let Some(invite) = &self.jam_state.pending_invite {
+                invite.token.hash(&mut hasher);
+                invite.host.hash(&mut hasher);
+                invite.people.hash(&mut hasher);
+            }
+            hasher.finish()
+        };
         if jam != self.api_pushed.jam {
             if self.api_pushed.jam != 0 {
                 server.broadcast("jam", Value::Null);
@@ -463,11 +565,18 @@ impl App {
             self.api_pushed.jam = jam;
         }
 
-        // Words placed in the playing song are news to a lyrics view.
-        let lyrics = fingerprint((
-            self.lyrics_uri.clone(),
-            self.lyric_words.as_ref().map(|words| words.uri.clone()),
-        ));
+        // Words placed in the playing song, or lyrics arriving, are news to a lyrics view.
+        let lyrics = {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            self.lyrics_uri.hash(&mut hasher);
+            self.lyrics.is_loading().hash(&mut hasher);
+            self.lyrics.get().is_some().hash(&mut hasher);
+            self.lyric_words
+                .as_ref()
+                .map(|words| words.uri.as_str())
+                .hash(&mut hasher);
+            hasher.finish()
+        };
         if lyrics != self.api_pushed.lyrics {
             if self.api_pushed.lyrics != 0 {
                 server.broadcast("lyrics", Value::Null);
@@ -491,6 +600,10 @@ impl App {
             self.api_pushed.toast = Some(latest.max(since.unwrap_or(latest)));
         } else if since.is_none() {
             self.api_pushed.toast = Some(std::time::Instant::now());
+        }
+
+        for page in self.api_pushed.dirty_pages.drain() {
+            server.broadcast("page", json!({ "page": page }));
         }
     }
 
@@ -526,15 +639,15 @@ impl App {
     /// The account's Jam, an invitation waiting for an answer, and whether
     /// one is being started or joined.
     pub(super) fn api_jam(&self) -> Value {
-        let invite = match &self.dialog {
-            Some(crate::model::Dialog::JoinJam(invite)) => json!({
+        let invite = match &self.jam_state.pending_invite {
+            Some(invite) => json!({
                 "token": invite.token,
                 "host": invite.host,
                 "people": invite.people,
             }),
             _ => Value::Null,
         };
-        let jam = self.jam.as_ref().map(|jam| {
+        let jam = self.jam_state.active.as_ref().map(|jam| {
             json!({
                 "hosting": jam.hosting,
                 "host": jam.host().map(|host| host.name.clone()),
@@ -552,7 +665,7 @@ impl App {
         json!({
             "jam": jam,
             "invite": invite,
-            "busy": self.jam_busy,
+            "busy": self.jam_state.busy,
             "can_start": self.local_ready,
         })
     }
@@ -779,9 +892,7 @@ impl App {
                 ok()
             }
             "jam.decline" => {
-                if matches!(self.dialog, Some(crate::model::Dialog::JoinJam(_))) {
-                    self.actions.push(Action::CloseDialog);
-                }
+                self.jam_state.pending_invite = None;
                 ok()
             }
 
@@ -1458,9 +1569,13 @@ impl App {
     /// `downloading` (the model, the first time), `preparing` (loading it),
     /// `running`, or `failed`, with `error` saying why.
     fn api_karaoke(&self) -> Value {
-        let status = if self.karaoke_fetching {
+        let error = match &self.karaoke_model {
+            super::KaraokeModelState::Failed(error) => Some(error.as_str()),
+            _ => None,
+        };
+        let status = if self.karaoke_model == super::KaraokeModelState::Downloading {
             "downloading"
-        } else if self.karaoke_error.is_some() {
+        } else if error.is_some() {
             "failed"
         } else if self.karaoke.enabled() {
             self.karaoke.status().as_str()
@@ -1472,7 +1587,7 @@ impl App {
             "on": self.karaoke.enabled(),
             "level": self.settings.karaoke_vocal_level,
             "status": status,
-            "error": self.karaoke_error,
+            "error": error,
         })
     }
 
@@ -2094,7 +2209,7 @@ impl App {
             }
         }
         let today = jiff::Zoned::now().date();
-        let episodes: Vec<Value> = crate::ui::home::podcast_episodes(
+        let episodes: Vec<Value> = crate::home_cache::podcast_episodes(
             &home.podcasts,
             |show| self.audiobook_shows.contains(&show.uri),
             today,

@@ -41,6 +41,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return menu
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        Self.model?.client?.stop()
+    }
+
     @objc private func togglePlay() { Self.model?.toggle() }
     @objc private func next() { Self.model?.next() }
     @objc private func previous() { Self.model?.previous() }

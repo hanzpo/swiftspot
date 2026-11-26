@@ -4,12 +4,9 @@
 #
 #   apple/install.sh
 #
-# The app is one bundle: the SwiftUI front end, and in
-# Contents/Helpers/SwiftSpot Engine.app the engine, which keeps the Spotify
-# session and plays the audio. The front end starts the engine out of
-# sight and the engine quits with it. The app is com.hanzpo.swiftspot and
-# the engine com.hanzpo.swiftspot.engine; the engine keeps the saved
-# sign-ins in the keychain under the first.
+# The app is one process: the SwiftUI front end with SwiftSpot's Rust
+# engine, which keeps the Spotify session and plays the audio, linked in
+# as a static library (src/ffi.rs). The app is com.hanzpo.swiftspot.
 #
 # The icon is SwiftSpot's own, Packaging/AppIcon.svg, rendered to
 # Packaging/AppIcon-1024.png by Packaging/render-icon.swift; set ICON to
@@ -48,24 +45,14 @@ if [ -z "${ICON:-}" ]; then
     iconutil -c icns "$iconset" -o "$ICON"
 fi
 
-# The engine: the Rust app, bundled as packaging/macos/bundle.sh bundles
-# it, kept out of the Dock.
-(cd "$root" && cargo build --release --locked)
-engine="$here/.build/SwiftSpot Engine.app"
-"$root/packaging/macos/bundle.sh" "$root/target/release/swiftspot" "$engine" "$version" >/dev/null
-/usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$engine/Contents/Info.plist"
-cp "$ICON" "$engine/Contents/Resources/swiftspot.icns"
-"${sign[@]}" "$engine"
-
-# The front end around it.
+(cd "$root" && cargo build --release --locked --lib)
 (cd "$here" && swift build -c release)
 bundle="$here/.build/SwiftSpot.app"
 rm -rf "$bundle"
-mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources" "$bundle/Contents/Helpers"
+mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp "$(cd "$here" && swift build -c release --show-bin-path)/SwiftSpot" "$bundle/Contents/MacOS/SwiftSpot"
 sed "s/__VERSION__/$version/g" "$here/Packaging/Info.plist" > "$bundle/Contents/Info.plist"
 cp "$ICON" "$bundle/Contents/Resources/AppIcon.icns"
-mv "$engine" "$bundle/Contents/Helpers/"
 "${sign[@]}" "$bundle"
 codesign --verify --deep --strict "$bundle"
 
@@ -75,8 +62,8 @@ if [ -n "${BUILD_ONLY:-}" ]; then
     exit 0
 fi
 
-# Quit what runs now: this app, and the engine or the app under its older
-# names, Spotlite and Spotifast.
+# Quit what runs now: this app, and the app under its older names,
+# Spotlite and Spotifast.
 for name in SwiftSpot Spotlite Spotifast; do
     if pgrep -xq "$name"; then
         osascript -e "quit app \"$name\"" 2>/dev/null || true

@@ -159,20 +159,20 @@ pub struct Settings {
     pub theme: ThemeChoice,
     /// Filename selected from the local themes directory.
     pub custom_theme: Option<String>,
-    /// Last accepted appearance, retained if its source file becomes unavailable.
+    /// Last accepted appearance, preserved losslessly for settings compatibility.
     #[serde(
         default,
-        deserialize_with = "fastframe_theme::read_cached_theme",
+        deserialize_with = "read_cached_theme_headless",
         skip_serializing_if = "Option::is_none"
     )]
-    pub custom_theme_cache: Option<crate::theme::CustomTheme>,
-    /// Last detected system palette, so following Omarchy survives a restart.
+    pub custom_theme_cache: Option<serde_json::Value>,
+    /// Last detected system palette, preserved losslessly for settings compatibility.
     #[serde(
         default,
-        deserialize_with = "fastframe_theme::read_cached_theme",
+        deserialize_with = "read_cached_theme_headless",
         skip_serializing_if = "Option::is_none"
     )]
-    pub system_theme_cache: Option<crate::theme::CustomTheme>,
+    pub system_theme_cache: Option<serde_json::Value>,
     pub home: HomeSettings,
     /// Tint the interface with the colour of the playing album's art.
     pub accent_from_art: bool,
@@ -343,18 +343,22 @@ fn default_buffer_ms() -> u32 {
     crate::sink::DEFAULT_BUFFER_MS
 }
 
-impl Settings {
-    pub(crate) fn cached_palette(&self) -> Option<crate::theme::Palette> {
-        let theme = if self.custom_theme.is_some() {
-            self.custom_theme_cache.as_ref()
-        } else if self.theme == ThemeChoice::System {
-            self.system_theme_cache.as_ref()
-        } else {
-            None
-        };
-        theme.map(|theme| theme.palette)
-    }
+fn read_cached_theme_headless<'de, D>(
+    deserializer: D,
+) -> Result<Option<serde_json::Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer).unwrap_or(None);
+    Ok(value.filter(|entry| {
+        entry.get("filename").and_then(|v| v.as_str()).is_some()
+            && entry
+                .get("palette")
+                .is_some_and(serde_json::Value::is_object)
+    }))
+}
 
+impl Settings {
     pub(crate) fn proxy_password_record(
         &self,
     ) -> Result<Option<crate::credentials::ProxyPassword>, String> {
@@ -429,9 +433,6 @@ impl Settings {
     }
 
     pub fn save(&self, path: &Path) {
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
         let text = match serde_json::to_string_pretty(self) {
             Ok(text) => text,
             Err(error) => {
@@ -439,11 +440,15 @@ impl Settings {
                 return;
             }
         };
-        let temporary = path.with_extension("json.tmp");
-        let written = std::fs::write(&temporary, text)
-            .and_then(|()| crate::util::replace_file(&temporary, path));
-        if let Err(error) = written {
+        if let Err(error) = crate::file_writer::write_atomic(path, text.as_bytes()) {
             log::warn!("unable to save settings to {}: {error}", path.display());
+        }
+    }
+
+    pub fn save_with(&self, writer: &crate::file_writer::FileWriter, path: std::path::PathBuf) {
+        match serde_json::to_string_pretty(self) {
+            Ok(text) => writer.write(path, text.into_bytes()),
+            Err(error) => log::warn!("unable to encode settings: {error}"),
         }
     }
 
@@ -778,31 +783,6 @@ mod tests {
         let encoded = serde_json::to_string(&enabled).unwrap();
         let decoded: Settings = serde_json::from_str(&encoded).unwrap();
         assert!(decoded.mac_notch_widget);
-    }
-
-    #[test]
-    fn custom_theme_cache_round_trips_and_a_bad_cache_keeps_other_settings() {
-        let mut settings: Settings = serde_json::from_str("{}").unwrap();
-        assert!(settings.custom_theme.is_none() && settings.custom_theme_cache.is_none());
-        settings.custom_theme = Some("gruvbox.json".into());
-        let mut palette = crate::theme::Palette::light();
-        palette.shadow = egui::Color32::from_rgba_unmultiplied(37, 128, 249, 117);
-        settings.custom_theme_cache = Some(crate::theme::CustomTheme {
-            filename: "gruvbox.json".into(),
-            palette,
-        });
-        let encoded = serde_json::to_string(&settings).unwrap();
-        assert_eq!(
-            serde_json::from_str::<Settings>(&encoded).unwrap(),
-            settings
-        );
-        let mut damaged = serde_json::to_value(&settings).unwrap();
-        damaged["custom_theme_cache"] = serde_json::json!({"palette": "broken"});
-        damaged["audio_cache_mb"] = 777.into();
-        let recovered: Settings = serde_json::from_value(damaged).unwrap();
-        assert_eq!(recovered.custom_theme.as_deref(), Some("gruvbox.json"));
-        assert_eq!(recovered.audio_cache_mb, 777);
-        assert!(recovered.custom_theme_cache.is_none());
     }
 
     #[test]
@@ -1326,9 +1306,6 @@ impl SessionState {
     }
 
     pub fn save(&self, path: &Path) {
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
         let text = match serde_json::to_string(self) {
             Ok(text) => text,
             Err(error) => {
@@ -1336,11 +1313,15 @@ impl SessionState {
                 return;
             }
         };
-        let temporary = path.with_extension("json.tmp");
-        let written = std::fs::write(&temporary, text)
-            .and_then(|()| crate::util::replace_file(&temporary, path));
-        if let Err(error) = written {
+        if let Err(error) = crate::file_writer::write_atomic(path, text.as_bytes()) {
             log::warn!("unable to save session to {}: {error}", path.display());
+        }
+    }
+
+    pub fn save_with(&self, writer: &crate::file_writer::FileWriter, path: std::path::PathBuf) {
+        match serde_json::to_string(self) {
+            Ok(text) => writer.write(path, text.into_bytes()),
+            Err(error) => log::warn!("unable to encode session: {error}"),
         }
     }
 }

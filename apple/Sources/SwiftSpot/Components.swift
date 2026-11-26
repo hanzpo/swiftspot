@@ -1,14 +1,25 @@
 import SwiftUI
 
-/// How long to wait before asking the engine again: soon at first, then
-/// every two seconds, which outlasts a Spotify rate limit of half a minute
-/// without asking into it every moment. Loops stop after about ten
-/// minutes, and with the view that started them.
-func pollDelay(_ attempt: Int) -> Duration {
-    .milliseconds(min(200 + attempt * 150, 2_000))
+/// Runs a periodic `TimelineView` only while playback is active; when paused,
+/// renders statically at the last reported timestamp with zero timer wakeups.
+struct PlaybackClock<Content: View>: View {
+    @Environment(AppModel.self) private var model
+    var interval: TimeInterval
+    @ViewBuilder var content: (Date) -> Content
+
+    var body: some View {
+        if model.player.playing == true {
+            TimelineView(.periodic(from: .now, by: interval)) { context in
+                content(context.date)
+            }
+        } else {
+            content(model.playerAt)
+        }
+    }
 }
 
-/// Asks the server for a page until it has finished loading, and again
+/// Asks the server for a page until it has finished loading, waiting on
+/// server-pushed page events instead of tight socket polling, and reloads
 /// whenever the library changes underneath it.
 struct Loader<Value: Decodable & Sendable, Content: View>: View {
     @Environment(AppModel.self) private var model
@@ -41,7 +52,8 @@ struct Loader<Value: Decodable & Sendable, Content: View>: View {
     }
 
     private func poll() async {
-        for attempt in 0..<600 {
+        let waitKeys = pageEventKeys
+        for _ in 0..<120 {
             do {
                 let next = try await model.call(method, params, as: Value.self)
                 value = next
@@ -51,19 +63,36 @@ struct Loader<Value: Decodable & Sendable, Content: View>: View {
                 if value == nil { failure = error.localizedDescription }
                 return
             }
-            try? await Task.sleep(for: pollDelay(attempt))
+            await model.waitForPage(waitKeys, timeout: .seconds(5))
             if Task.isCancelled { return }
         }
     }
 
-    /// Asks for the next page of a long list, then follows it in.
+    /// Asks for the next page of a long list, then follows it in once the
+    /// engine pushes the updated page.
     private func more() {
         guard let page = params["page"] ?? pageName else { return }
         model.send("page.more", ["page": page])
+        let waitKeys = pageEventKeys
         Task {
-            try? await Task.sleep(for: .milliseconds(150))
-            generation += 1
+            await model.waitForPage(waitKeys, timeout: .seconds(2))
+            if !Task.isCancelled { generation += 1 }
         }
+    }
+
+    private var pageEventKeys: Set<String> {
+        var keys: Set<String> = ["library"]
+        if let name = params["page"] ?? pageName { keys.insert(name) }
+        switch method {
+        case "home.get": keys.insert("home")
+        case "top_songs.get": keys.insert("top_songs")
+        case "radio.get":
+            if let seed = params["seed"] { keys.insert("radio:\(seed)") }
+        case "user.get":
+            if let id = params["id"] { keys.insert("user:\(id)") }
+        default: break
+        }
+        return keys
     }
 
     private var pageName: String? {

@@ -153,6 +153,43 @@ final class AppModel {
     private var toastTask: Task<Void, Never>?
 
     private(set) var client: Client?
+    /// Continuations waiting for a server push event on a page or surface key.
+    private var pageWaiters: [UUID: (keys: Set<String>, resume: () -> Void)] = [:]
+
+    /// Suspends until the engine pushes an update matching any of `keys`,
+    /// `timeout` elapses, or the task is cancelled.
+    func waitForPage(_ keys: Set<String>, timeout: Duration = .seconds(5)) async {
+        let id = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                var resumed = false
+                let finish: @MainActor () -> Void = { [weak self] in
+                    guard !resumed else { return }
+                    resumed = true
+                    self?.pageWaiters.removeValue(forKey: id)
+                    continuation.resume()
+                }
+                pageWaiters[id] = (keys, finish)
+                Task { @MainActor in
+                    try? await Task.sleep(for: timeout)
+                    finish()
+                }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                if let waiter = self?.pageWaiters.removeValue(forKey: id) {
+                    waiter.resume()
+                }
+            }
+        }
+    }
+
+    private func notifyPageWaiters(_ key: String) {
+        let matching = pageWaiters.values.filter { $0.keys.contains(key) }
+        for waiter in matching {
+            waiter.resume()
+        }
+    }
 
     // MARK: Connecting
 
@@ -172,22 +209,25 @@ final class AppModel {
         showNowPlaying = environment["SWIFTSPOT_NOW_PLAYING"] != nil
     }
 
+    /// Starts the engine linked into this app and greets it. Calling it
+    /// again after it is connected does nothing; after a failure it tries
+    /// again.
     func connect() async {
+        if connection == .connected { return }
         connection = .connecting
-        do {
-            let client = try await Connector.connect()
+        if client == nil {
+            let client = Client.shared
+            guard client.running else {
+                connection = .failed(Client.Failure.notRunning.localizedDescription)
+                return
+            }
             client.onEvent = { [weak self] event, data in
                 self?.handle(event: event, data: data)
             }
-            client.onClose = { [weak self] in
-                self?.client = nil
-                self?.connection = .failed("SwiftSpot stopped.")
-                Task { [weak self] in
-                    try? await Task.sleep(for: .seconds(2))
-                    await self?.connect()
-                }
-            }
             self.client = client
+        }
+        do {
+            guard let client else { return }
             hello = try await client.call("hello", as: Hello.self)
             connection = .connected
             if hello?.signedIn == true {
@@ -228,15 +268,24 @@ final class AppModel {
                 if hello?.signedIn == true { await refreshAll() }
             }
         case "library":
+            notifyPageWaiters("library")
+            notifyPageWaiters("playlists")
             Task {
                 await loadPlaylists()
                 revision += 1
             }
+        case "page":
+            struct PageUpdate: Decodable { var page: String }
+            if let update = try? JSONDecoder.api.decode(PageUpdate.self, from: data) {
+                notifyPageWaiters(update.page)
+            }
         case "queue":
+            notifyPageWaiters("queue")
             if panel == .queue { Task { await loadQueue() } }
         case "jam":
             Task { await loadJam() }
         case "lyrics":
+            notifyPageWaiters("lyrics")
             // Words placed in the song: a lyrics view shows them sung.
             if lyrics != nil { Task { await loadLyrics() } }
         case "toast":
@@ -292,14 +341,14 @@ final class AppModel {
     }
 
     func loadPlaylists() async {
-        for attempt in 0..<600 {
+        for _ in 0..<120 {
             guard let list = try? await call("library.playlists", as: PlaylistList.self) else { return }
             // A reload in progress or one that failed keeps the list shown.
             if let fresh = list.playlists { playlists = fresh }
             if let rows = list.rows { sidebarRows = rows }
             likedContext = list.likedContext ?? likedContext
             if !list.loading { return }
-            try? await Task.sleep(for: pollDelay(attempt))
+            await waitForPage(["playlists", "library"], timeout: .seconds(3))
             if Task.isCancelled { return }
         }
     }
@@ -486,11 +535,11 @@ final class AppModel {
     }
 
     func loadQueue() async {
-        for attempt in 0..<600 {
+        for _ in 0..<120 {
             guard let state = try? await call("queue.get", as: QueueState.self) else { return }
             queue = state
             if !state.loading { return }
-            try? await Task.sleep(for: pollDelay(attempt))
+            await waitForPage(["queue"], timeout: .seconds(3))
             if Task.isCancelled { return }
         }
     }
@@ -534,14 +583,14 @@ final class AppModel {
     // MARK: Lyrics
 
     func loadLyrics() async {
-        for attempt in 0..<600 {
+        for attempt in 0..<120 {
             guard let state = try? await call("lyrics.get", as: LyricsState.self) else { return }
             lyrics = state
             // A song just played here is shown before the engine has moved
             // to it, and its answer can still be the last song's: ask
             // again, for a while, until it is this song's.
-            if !state.loading, state.uri == player.uri || !player.hasSong || attempt >= 30 { return }
-            try? await Task.sleep(for: pollDelay(attempt))
+            if !state.loading, state.uri == player.uri || !player.hasSong || attempt >= 15 { return }
+            await waitForPage(["lyrics"], timeout: .seconds(2))
             if Task.isCancelled { return }
         }
     }
@@ -555,8 +604,9 @@ final class AppModel {
             devices = state.devices
             localPlayback = state.localPlayback
             localPlaybackError = state.localError
-            if !state.loading && attempt > 1 { return }
-            try? await Task.sleep(for: .milliseconds(400))
+            if !state.loading && attempt > 0 { return }
+            await waitForPage(["devices"], timeout: .milliseconds(600))
+            if Task.isCancelled { return }
         }
     }
 

@@ -65,14 +65,170 @@ fn session_drops_exhausted(reconnects: &mut Vec<Instant>, now: Instant) -> bool 
     reconnects.len() >= RECONNECT_LIMIT
 }
 
-/// Record a replacement requested while a connection attempt is still in
-/// flight. The finished attempt must be discarded and immediately retried
-/// with the newest config instead of installing stale state.
-fn defer_engine_replace(engine_busy: bool, restart_pending: &mut bool) -> bool {
-    if engine_busy {
-        *restart_pending = true;
+/// Explicit lifecycle state for the local librespot playback engine.
+/// Makes idle, draining a dropped session's player, connecting (with optional
+/// deferred restart), and running mutually exclusive instead of four separate
+/// booleans and options.
+#[derive(Default)]
+enum EngineSlot {
+    #[default]
+    Idle,
+    /// A dropped session's player is still draining its buffered song while
+    /// waiting for the replacement connection to start.
+    Draining(KeptPlayer),
+    /// A librespot connection handshake is in flight.
+    Connecting {
+        kept: Option<KeptPlayer>,
+        restart_after: bool,
+    },
+    /// A connected engine is running.
+    Running(Arc<Engine>),
+}
+
+impl EngineSlot {
+    fn running(&self) -> Option<&Arc<Engine>> {
+        match self {
+            Self::Running(engine) => Some(engine),
+            _ => None,
+        }
     }
-    engine_busy
+
+    fn running_cloned(&self) -> Option<Arc<Engine>> {
+        self.running().cloned()
+    }
+
+    fn is_connecting(&self) -> bool {
+        matches!(self, Self::Connecting { .. })
+    }
+
+    fn is_running(&self) -> bool {
+        matches!(self, Self::Running(_))
+    }
+
+    #[cfg(test)]
+    fn restart_pending(&self) -> bool {
+        matches!(
+            self,
+            Self::Connecting {
+                restart_after: true,
+                ..
+            }
+        )
+    }
+
+    fn take_running(&mut self) -> Option<Arc<Engine>> {
+        if matches!(self, Self::Running(_)) {
+            match std::mem::replace(self, Self::Idle) {
+                Self::Running(engine) => Some(engine),
+                _ => unreachable!(),
+            }
+        } else {
+            None
+        }
+    }
+
+    fn keep_player(&mut self, kept: KeptPlayer) {
+        self.stop_kept();
+        *self = Self::Draining(kept);
+    }
+
+    fn stop_kept(&mut self) {
+        match self {
+            Self::Draining(_) => {
+                if let Self::Draining(player) = std::mem::replace(self, Self::Idle) {
+                    player.stop();
+                }
+            }
+            Self::Connecting { kept, .. } => {
+                if let Some(player) = kept.take() {
+                    player.stop();
+                }
+            }
+            Self::Idle | Self::Running(_) => {}
+        }
+    }
+
+    fn toggle_kept(&self) -> bool {
+        match self {
+            Self::Draining(player) => player.toggle(),
+            Self::Connecting {
+                kept: Some(player), ..
+            } => player.toggle(),
+            _ => false,
+        }
+    }
+
+    fn defer_replace(&mut self) -> bool {
+        if let Self::Connecting { restart_after, .. } = self {
+            *restart_after = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Transitions `Idle | Draining(kept)` -> `Connecting { kept, restart_after: false }`
+    /// and returns a clone of any kept player to hand to `Engine::connect`.
+    fn begin_connect(&mut self) -> Option<KeptPlayer> {
+        let kept = match std::mem::replace(self, Self::Idle) {
+            Self::Draining(player) => Some(player),
+            Self::Idle => None,
+            other => {
+                *self = other;
+                return None;
+            }
+        };
+        let clone = kept.clone();
+        *self = Self::Connecting {
+            kept,
+            restart_after: false,
+        };
+        clone
+    }
+
+    /// Finishes an in-flight connection attempt, returning `(kept, restart_after)`.
+    /// Resets the slot to `Idle` (or `Draining(kept)` if `restart_after` is true
+    /// and a kept player is still carrying audio).
+    fn finish_connect(&mut self) -> (Option<KeptPlayer>, bool) {
+        match std::mem::replace(self, Self::Idle) {
+            Self::Connecting {
+                kept,
+                restart_after,
+            } => {
+                if restart_after {
+                    let has_kept = kept.is_some();
+                    if let Some(player) = kept {
+                        *self = Self::Draining(player);
+                    }
+                    (None, has_kept || restart_after)
+                } else {
+                    (kept, false)
+                }
+            }
+            other => {
+                *self = other;
+                (None, false)
+            }
+        }
+    }
+
+    fn has_kept(&self) -> bool {
+        matches!(
+            self,
+            Self::Draining(_) | Self::Connecting { kept: Some(_), .. }
+        )
+    }
+
+    fn shutdown_all(&mut self) {
+        match std::mem::replace(self, Self::Idle) {
+            Self::Running(engine) => engine.shutdown(),
+            Self::Draining(player) => player.stop(),
+            Self::Connecting {
+                kept: Some(player), ..
+            } => player.stop(),
+            Self::Idle | Self::Connecting { kept: None, .. } => {}
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -643,11 +799,12 @@ pub enum Command {
         cover: crate::playlist_cover::Cover,
         images: Vec<crate::api::models::Image>,
     },
-    ChoosePlaylistCover {
+    /// Read and prepare a playlist cover file off the engine thread, then upload it.
+    PreparePlaylistCover {
         id: String,
         request: u64,
-        selected:
-            std::pin::Pin<Box<dyn std::future::Future<Output = Option<rfd::FileHandle>> + Send>>,
+        previous_urls: Vec<String>,
+        path: std::path::PathBuf,
     },
     /// Start (or restart) the Web API sign-in in the browser.
     SignIn {
@@ -1028,11 +1185,68 @@ pub enum LocalPlayback {
     Failed(String),
 }
 
-/// Background services (the runtime, MPRIS, the tray) outlive individual
-/// windows: the window is destroyed when it closes to the tray and created
-/// again on demand. They therefore hold this handle, which repaints
-/// whichever window exists, instead of an `egui::Context`.
-pub use fastframe_shell::Waker;
+/// Background services (the runtime, MPRIS/Now Playing, the embedded FFI bridge)
+/// wake the engine loop via [`Waker::wake`].
+#[derive(Clone, Default)]
+pub struct Waker {
+    signal: Arc<WakeSignal>,
+}
+
+#[derive(Default)]
+struct WakeSignal {
+    pending: std::sync::Mutex<bool>,
+    ready: std::sync::Condvar,
+}
+
+impl Waker {
+    /// Signals that work is ready for the next pass.
+    pub fn wake(&self) {
+        {
+            let mut pending = self
+                .signal
+                .pending
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *pending = true;
+        }
+        self.signal.ready.notify_one();
+    }
+
+    /// Sleeps until [`Waker::wake`] is called or `timeout` elapses.
+    /// A `None` timeout sleeps indefinitely until woken.
+    pub fn wait(&self, timeout: Option<Duration>) {
+        let mut pending = self
+            .signal
+            .pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if *pending {
+            *pending = false;
+            return;
+        }
+        match timeout {
+            Some(limit) if limit.is_zero() => {}
+            Some(limit) => {
+                let (mut guard, _) = self
+                    .signal
+                    .ready
+                    .wait_timeout(pending, limit)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                *guard = false;
+            }
+            None => {
+                while !*pending {
+                    pending = self
+                        .signal
+                        .ready
+                        .wait(pending)
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                }
+                *pending = false;
+            }
+        }
+    }
+}
 
 /// The interface's handle to the runtime.
 pub struct Backend {
@@ -1160,9 +1374,8 @@ impl Backend {
         &self.activity
     }
 
-    /// Stops Spotify-bound commands from leaving the process; artwork and
-    /// shutdown still work. Used by the demo mode and by headless tests.
-    #[cfg_attr(not(any(test, feature = "demo")), allow(dead_code))]
+    /// Stops Spotify-bound commands from leaving the process; shutdown still works.
+    #[allow(dead_code)]
     pub fn set_offline(&mut self, offline: bool) {
         self.offline = offline;
     }
@@ -1179,23 +1392,6 @@ impl Backend {
             return;
         }
         let _ = self.commands.send(command);
-    }
-
-    /// Construct the native dialog on the UI thread, then await and read it
-    /// on the runtime. AppKit requires its window lookup on the main thread.
-    pub fn choose_playlist_cover(&self, id: String, request: u64) {
-        if self.offline {
-            return;
-        }
-        let selected = rfd::AsyncFileDialog::new()
-            .set_title("Choose playlist cover")
-            .add_filter("JPEG or PNG image", &["jpg", "jpeg", "png"])
-            .pick_file();
-        self.send(Command::ChoosePlaylistCover {
-            id,
-            request,
-            selected: Box::pin(selected),
-        });
     }
 
     pub fn api(&self, request: ApiRequest) {
@@ -1284,7 +1480,7 @@ impl Backend {
     }
 
     #[cfg(test)]
-    pub(crate) fn take_jam_requests(&self) -> Vec<JamRequest> {
+    pub fn take_jam_requests(&self) -> Vec<JamRequest> {
         std::mem::take(
             &mut *self
                 .jam_requests
@@ -1294,7 +1490,7 @@ impl Backend {
     }
 
     #[cfg(test)]
-    pub(crate) fn take_home_episode_requests(&self) -> Vec<(Vec<String>, u64)> {
+    pub fn take_home_episode_requests(&self) -> Vec<(Vec<String>, u64)> {
         std::mem::take(
             &mut *self
                 .home_episode_requests
@@ -1349,17 +1545,17 @@ impl Backend {
     }
 
     #[cfg(test)]
-    pub(crate) fn take_queue_requests(&self) -> Vec<ApiRequest> {
+    pub fn take_queue_requests(&self) -> Vec<ApiRequest> {
         std::mem::take(&mut *self.queue_requests.lock().unwrap())
     }
 
     #[cfg(test)]
-    pub(crate) fn take_queued_tracks(&self) -> Vec<String> {
+    pub fn take_queued_tracks(&self) -> Vec<String> {
         std::mem::take(&mut *self.queued_tracks.lock().unwrap())
     }
 
     #[cfg(test)]
-    pub(crate) fn take_player_commands(&self) -> Vec<PlayerCommand> {
+    pub fn take_player_commands(&self) -> Vec<PlayerCommand> {
         std::mem::take(&mut *self.player_commands.lock().unwrap())
     }
 
@@ -1383,7 +1579,7 @@ impl Backend {
     }
 
     #[cfg(test)]
-    pub(crate) fn take_album_type_requests(&self) -> Vec<Vec<String>> {
+    pub fn take_album_type_requests(&self) -> Vec<Vec<String>> {
         std::mem::take(
             &mut *self
                 .album_type_requests
@@ -1576,7 +1772,7 @@ struct Worker {
     events: std::sync::mpsc::Sender<Event>,
     commands: mpsc::UnboundedSender<Command>,
     waker: Waker,
-    engine: Option<Arc<Engine>>,
+    engine_slot: EngineSlot,
     /// What the engine is heard at, so the engine that replaces it starts
     /// there. `engine_config` alone knows only the level the app launched
     /// with.
@@ -1600,16 +1796,7 @@ struct Worker {
     /// Counts engine sessions watched for Jam updates; answers from an
     /// older one are dropped.
     jam_watch: u64,
-    /// True while a playback grant or engine connection is in flight, so a
-    /// second attempt does not pile up.
-    engine_busy: bool,
-    /// The player of an engine whose session dropped, still playing what it
-    /// had fetched, for the next engine to carry on with.
-    kept_player: Option<KeptPlayer>,
     search_tasks: Vec<tokio::task::AbortHandle>,
-    /// A user changed engine-affecting settings while the current connection
-    /// attempt was in flight. Its result is stale and must not be installed.
-    engine_restart_pending: bool,
     signed_in: bool,
     /// The plan, once the Web API has answered.
     premium: Option<bool>,
@@ -1666,7 +1853,7 @@ impl Worker {
             events,
             commands,
             waker,
-            engine: None,
+            engine_slot: EngineSlot::Idle,
             heard: None,
             rootlist_pending: false,
             album_type_lookup: AlbumTypeLookup::default(),
@@ -1676,10 +1863,7 @@ impl Worker {
             profiles_waiting: BTreeSet::new(),
             jam: None,
             jam_watch: 0,
-            engine_busy: false,
-            kept_player: None,
             search_tasks: Vec::new(),
-            engine_restart_pending: false,
             signed_in: false,
             premium: None,
             cancel_signin: None,
@@ -1906,31 +2090,44 @@ impl Worker {
                         waker.wake();
                     });
                 }
-                Command::ChoosePlaylistCover {
+                Command::PreparePlaylistCover {
                     id,
                     request,
-                    selected,
+                    previous_urls,
+                    path,
                 } => {
                     let events = self.events.clone();
                     let waker = self.waker.clone();
+                    let commands = self.commands.clone();
                     tokio::spawn(async move {
-                        let selected = selected.await;
-                        let result = match selected {
-                            None => Ok(None),
-                            Some(file) => tokio::task::spawn_blocking(move || {
-                                crate::playlist_cover::read(file.path()).map(Some)
-                            })
-                            .await
-                            .unwrap_or_else(|_| {
-                                Err("Couldn't prepare that image. Try another file.".into())
-                            }),
-                        };
-                        let _ = events.send(Event::PlaylistCoverChosen {
-                            id,
-                            request,
-                            result,
-                        });
-                        waker.wake();
+                        let prepared = tokio::task::spawn_blocking(move || {
+                            let size = std::fs::metadata(&path)
+                                .map_err(|error| format!("Couldn't read the image: {error}"))?
+                                .len();
+                            if size > 20 * 1024 * 1024 {
+                                return Err("The image is too large.".to_string());
+                            }
+                            let bytes = std::fs::read(&path)
+                                .map_err(|error| format!("Couldn't read the image: {error}"))?;
+                            crate::playlist_cover::prepare(&bytes)
+                        })
+                        .await
+                        .unwrap_or_else(|_| Err("Couldn't prepare that image.".to_string()));
+                        match prepared {
+                            Ok(cover) => {
+                                let _ =
+                                    commands.send(Command::Api(ApiRequest::UploadPlaylistCover {
+                                        id,
+                                        request,
+                                        previous_urls,
+                                        cover,
+                                    }));
+                            }
+                            Err(error) => {
+                                let _ = events.send(Event::Error(error));
+                                waker.wake();
+                            }
+                        }
                     });
                 }
                 Command::Shutdown => break,
@@ -1968,7 +2165,7 @@ impl Worker {
                     self.replace_engine();
                 }
                 Command::ApplyProxy { request, config } => self.change_proxy(request, config, None),
-                Command::Player(command) => match &self.engine {
+                Command::Player(command) => match self.engine_slot.running() {
                     // Until the new session picks the song up, it has
                     // nothing to pause: the player does it.
                     Some(engine)
@@ -1982,8 +2179,7 @@ impl Worker {
                     }
                     // While the session reconnects, the song it left pauses
                     // and plays on its own player.
-                    None if command == PlayerCommand::Toggle
-                        && self.kept_player.as_ref().is_some_and(KeptPlayer::toggle) => {}
+                    None if command == PlayerCommand::Toggle && self.engine_slot.toggle_kept() => {}
                     None => {
                         if matches!(&command, PlayerCommand::Load(_)) {
                             // Something else chosen: the old song stops.
@@ -2154,7 +2350,7 @@ impl Worker {
                     variables,
                     reply,
                 } => {
-                    let Some(engine) = self.engine.clone() else {
+                    let Some(engine) = self.engine_slot.running_cloned() else {
                         reply(Err("Spotify isn't connected yet".into()));
                         continue;
                     };
@@ -2360,10 +2556,7 @@ impl Worker {
                 }
             }
         }
-        if let Some(engine) = self.engine.take() {
-            engine.shutdown();
-        }
-        self.stop_kept_player();
+        self.engine_slot.shutdown_all();
         drop(cache_writes);
         let _ = cache_writer.await;
     }
@@ -2638,10 +2831,10 @@ impl Worker {
             });
         }
         // The session may have signed in first; it must be this account's.
-        if let Some(engine) = &self.engine
+        if let Some(engine) = self.engine_slot.running()
             && engine.session().username() != user.id
         {
-            if let Some(engine) = self.engine.take() {
+            if let Some(engine) = self.engine_slot.take_running() {
                 engine.shutdown();
             }
             self.emit(Event::Playback(LocalPlayback::Failed(
@@ -2894,7 +3087,6 @@ impl Worker {
         self.restore_pending = [false; 3];
         self.web_tokens = [None, None];
         self.playback_grant = None;
-        self.engine_busy = false;
         self.premium = None;
         self.resume = None;
         self.resume_verify = None;
@@ -2908,10 +3100,7 @@ impl Worker {
             self.emit(Event::Jam(None));
         }
         self.carry_volume();
-        if let Some(engine) = self.engine.take() {
-            engine.shutdown();
-        }
-        self.stop_kept_player();
+        self.engine_slot.shutdown_all();
         if let Some(cancel) = self.cancel_signin.take() {
             let _ = cancel.send(true);
         }
@@ -2929,7 +3118,7 @@ impl Worker {
 
     fn on_playback_authorized(&mut self, access_token: String) {
         let Some(credentials) = playback_credentials(self.api.account(), access_token) else {
-            self.engine_busy = false;
+            let _ = self.engine_slot.finish_connect();
             self.emit(Event::Playback(LocalPlayback::Failed(
                 "Finish signing in to Spotify before enabling playback.".into(),
             )));
@@ -2966,8 +3155,8 @@ impl Worker {
         // rate limit can hold its answer back for minutes, and the session
         // needs nothing from it.
         if !may_start_session(self.signed_in, &self.api.state(ApiSource::Shared))
-            || self.engine.is_some()
-            || self.engine_busy
+            || self.engine_slot.is_running()
+            || self.engine_slot.is_connecting()
             || self.premium == Some(false)
         {
             return;
@@ -3033,7 +3222,7 @@ impl Worker {
         // New audio settings take effect now, even when the replacement
         // waits for a connection in flight.
         self.stop_kept_player();
-        if defer_engine_replace(self.engine_busy, &mut self.engine_restart_pending) {
+        if self.engine_slot.defer_replace() {
             return;
         }
         self.take_engine_for_resume();
@@ -3049,7 +3238,7 @@ impl Worker {
         if !self.signed_in {
             return;
         }
-        if self.engine_busy {
+        if self.engine_slot.is_connecting() {
             return;
         }
         let now = Instant::now();
@@ -3092,7 +3281,7 @@ impl Worker {
         self.album_type_lookup.requeue_active_for_new_engine();
         self.playlist_header_lookup.requeue_active_for_new_engine();
         self.carry_volume();
-        if let Some(engine) = self.engine.take() {
+        if let Some(engine) = self.engine_slot.take_running() {
             self.resume = engine.resume_point();
             engine.shutdown();
         }
@@ -3105,22 +3294,20 @@ impl Worker {
         self.resume_verify = None;
         self.album_type_lookup.requeue_active_for_new_engine();
         self.carry_volume();
-        if let Some(engine) = self.engine.take() {
+        if let Some(engine) = self.engine_slot.take_running() {
             // A replacement that dropped before picking the song up has no
             // playback of its own to give: the first pickup stands.
             if !engine.carrying() || self.resume.is_none() {
                 self.resume = engine.resume_point();
             }
-            self.kept_player = Some(engine.keep_player());
+            self.engine_slot.keep_player(engine.keep_player());
         }
     }
 
     /// Stops the song a dropped session left playing, when no engine is
     /// going to pick it up.
     fn stop_kept_player(&mut self) {
-        if let Some(player) = self.kept_player.take() {
-            player.stop();
-        }
+        self.engine_slot.stop_kept();
     }
 
     /// Start (or re-enter) the playback authorization in the browser. This is
@@ -3134,7 +3321,7 @@ impl Worker {
                 return;
             }
         };
-        if self.engine_busy || self.cancel_signin.is_some() {
+        if self.engine_slot.is_connecting() || self.cancel_signin.is_some() {
             return;
         }
         if self.premium == Some(false) {
@@ -3215,7 +3402,7 @@ impl Worker {
             self.emit(Event::Playback(LocalPlayback::Failed(error)));
             return;
         }
-        if self.engine_busy {
+        if self.engine_slot.is_connecting() {
             return;
         }
         if self.premium == Some(false) {
@@ -3225,7 +3412,7 @@ impl Worker {
             return;
         }
         self.cancel_signin = None;
-        self.engine_busy = true;
+        let kept = self.engine_slot.begin_connect();
         self.emit(Event::Playback(LocalPlayback::Connecting));
         let lease = self.credentials.lease(CredentialSlot::Playback);
         let config = self.engine_config.clone();
@@ -3236,7 +3423,6 @@ impl Worker {
         let commands = self.commands.clone();
         let waker = self.waker.clone();
         let session_generation = self.album_type_lookup.session_generation;
-        let kept = self.kept_player.clone();
         tokio::spawn(async move {
             let cache = match config.open_cache() {
                 Ok(cache) => cache,
@@ -3297,19 +3483,21 @@ impl Worker {
         let current = session_generation == self.album_type_lookup.session_generation;
         if !current || !may_start_session(self.signed_in, &self.api.state(ApiSource::Shared)) {
             if current {
-                self.engine_busy = false;
-                self.engine_restart_pending = false;
+                let (kept, _) = self.engine_slot.finish_connect();
+                if let Some(player) = kept {
+                    player.stop();
+                }
             }
             if let Some(engine) = engine {
                 engine.shutdown();
             }
             return;
         }
-        self.engine_busy = false;
-        if std::mem::take(&mut self.engine_restart_pending) {
+        let (kept, restart_after) = self.engine_slot.finish_connect();
+        if restart_after {
             if let Some(engine) = engine {
                 // A newer attempt carries the same song on.
-                if engine.carrying() && self.kept_player.is_some() {
+                if engine.carrying() && self.engine_slot.has_kept() {
                     engine.close_session();
                 } else {
                     engine.shutdown();
@@ -3327,6 +3515,9 @@ impl Worker {
                         grant.username.as_deref().unwrap_or_default(),
                         self.api.account().as_ref(),
                     ) {
+                        if let Some(player) = kept {
+                            player.stop();
+                        }
                         engine.shutdown();
                         self.emit(Event::Playback(LocalPlayback::Failed("Playback was authorized for another Spotify account. Enable playback again with the signed-in account.".into())));
                         return;
@@ -3343,7 +3534,7 @@ impl Worker {
                 }
                 let device_id = engine.device_id().to_string();
                 // The engine plays the kept song on now.
-                self.kept_player = None;
+                drop(kept);
                 let engine = Arc::new(engine);
                 self.heard = Some(engine.heard());
                 if let Some(spec) = self.resume.take() {
@@ -3356,7 +3547,7 @@ impl Worker {
                 if !self.signed_in {
                     self.connected_over_session(&engine);
                 }
-                self.engine = Some(engine);
+                self.engine_slot = EngineSlot::Running(engine);
                 self.start_rootlist();
                 self.reconnects.clear();
                 self.emit(Event::Playback(LocalPlayback::Ready { device_id }));
@@ -3369,6 +3560,9 @@ impl Worker {
             }
             None => {
                 self.resume = None;
+                if let Some(player) = kept {
+                    player.stop();
+                }
                 self.stop_kept_player();
                 let message = error.unwrap_or_else(|| "Local playback is unavailable".into());
                 self.emit(Event::Playback(LocalPlayback::Failed(message)));
@@ -3385,10 +3579,7 @@ impl Worker {
             self.album_type_lookup.clear_engine_work();
             self.playlist_header_lookup.clear_engine_work();
             self.carry_volume();
-            if let Some(engine) = self.engine.take() {
-                engine.shutdown();
-            }
-            self.stop_kept_player();
+            self.engine_slot.shutdown_all();
             let credential_stored = self.playback_grant.is_some();
             if credential_stored {
                 self.emit(Event::Playback(LocalPlayback::Failed(
@@ -3470,7 +3661,7 @@ impl Worker {
         let Some((spec, attempts)) = self.resume_verify.take() else {
             return;
         };
-        let Some(engine) = &self.engine else {
+        let Some(engine) = self.engine_slot.running() else {
             return;
         };
         if engine.interrupted().is_some() && !engine.carrying() {
@@ -3510,7 +3701,7 @@ impl Worker {
     }
 
     fn start_rootlist(&mut self) {
-        let fetch = self.engine.clone().map(|engine| async move {
+        let fetch = self.engine_slot.running_cloned().map(|engine| async move {
             engine
                 .rootlist()
                 .await
@@ -3565,7 +3756,7 @@ impl Worker {
     /// Asks the streaming session about the waiting shows. Without a
     /// session they wait; a failed answer leaves them shown.
     fn start_audiobook_lookup(&mut self) {
-        let Some(engine) = self.engine.clone() else {
+        let Some(engine) = self.engine_slot.running_cloned() else {
             return;
         };
         if self.audiobook_lookup.is_empty() {
@@ -3600,7 +3791,7 @@ impl Worker {
         if !self.signed_in {
             return;
         }
-        let Some(engine) = self.engine.clone() else {
+        let Some(engine) = self.engine_slot.running_cloned() else {
             return;
         };
         let Some(request) = self.playlist_header_lookup.next(*self.session.borrow()) else {
@@ -3654,7 +3845,7 @@ impl Worker {
     /// Resolves the waiting radios once the streaming session is ready; the
     /// Web API has no stations.
     fn start_radio(&mut self) {
-        let Some(engine) = self.engine.clone() else {
+        let Some(engine) = self.engine_slot.running_cloned() else {
             return;
         };
         let session_generation = *self.session.borrow();
@@ -3691,7 +3882,7 @@ impl Worker {
     }
 
     fn start_user_profiles(&mut self) {
-        let Some(engine) = self.engine.clone() else {
+        let Some(engine) = self.engine_slot.running_cloned() else {
             return;
         };
         let session_generation = *self.session.borrow();
@@ -3736,7 +3927,7 @@ impl Worker {
     /// Follows the account's Jam on a newly connected engine: reads it once,
     /// then takes every update Spotify pushes to the session.
     fn watch_jam(&mut self) {
-        let Some(engine) = self.engine.clone() else {
+        let Some(engine) = self.engine_slot.running_cloned() else {
             return;
         };
         self.jam_watch += 1;
@@ -3787,7 +3978,7 @@ impl Worker {
         {
             return;
         }
-        let Some(engine) = self.engine.clone() else {
+        let Some(engine) = self.engine_slot.running_cloned() else {
             self.emit(Event::JamFailed(
                 "Set up playback on this computer to use Jam.".into(),
             ));
@@ -3923,7 +4114,7 @@ impl Worker {
     }
 
     fn start_album_type_lookup(&mut self) {
-        let Some(engine) = self.engine.clone() else {
+        let Some(engine) = self.engine_slot.running_cloned() else {
             return;
         };
         let Some(request) = self.album_type_lookup.next() else {
@@ -3996,7 +4187,7 @@ impl Worker {
     fn prepare_words(&self, uri: String, query: Option<crate::lyrics::Query>) {
         let http = self.http.client();
         let cache_dir = self.dirs.lyrics_cache_dir();
-        let engine = self.engine.clone();
+        let engine = self.engine_slot.running_cloned();
         let commands = self.commands.clone();
         tokio::spawn(async move {
             let found = match spotify_lyrics(engine, &uri, &cache_dir).await {
@@ -4045,7 +4236,7 @@ impl Worker {
                 .words
                 .get_or_insert_with(crate::words::Placer::spawn)
                 .clone();
-            let engine = self.engine.clone();
+            let engine = self.engine_slot.running_cloned();
             let http = self.http.client();
             let dir = self.dirs.words_dir();
             let karaoke = self.dirs.karaoke_dir();
@@ -4113,7 +4304,7 @@ impl Worker {
         let events = self.events.clone();
         let waker = self.waker.clone();
         let cache_dir = self.dirs.lyrics_cache_dir();
-        let engine = self.engine.clone();
+        let engine = self.engine_slot.running_cloned();
         tokio::spawn(async move {
             // Spotify's own words go first: they follow the recording
             // exactly. Everything else, a signed-out session included,
@@ -4182,7 +4373,7 @@ impl Worker {
     /// Ask Spotify who is behind each user id. Only the streaming session
     /// can ask; without one the interface shows the bare ids.
     fn fetch_user_names(&self, ids: Vec<String>) {
-        let Some(engine) = self.engine.clone() else {
+        let Some(engine) = self.engine_slot.running_cloned() else {
             return;
         };
         let events = self.events.clone();
@@ -4238,7 +4429,7 @@ impl Worker {
         let personal_lease = self.credentials.lease(CredentialSlot::Personal);
         let background_api = Arc::clone(&self.background_api);
         let background = request.background();
-        let engine = self.engine.clone();
+        let engine = self.engine_slot.running_cloned();
         let commands = self.commands.clone();
         let mut session = self.session.subscribe();
         let generation = *session.borrow_and_update();
@@ -6629,10 +6820,10 @@ mod authorization_tests {
         worker.engine_config.proxy = ProxyConfig::System;
         worker.engine_proxy = Some(old_url.clone());
         worker.signed_in = true;
-        worker.engine_busy = true;
+        worker.engine_slot.begin_connect();
         worker.change_proxy(1, ProxyConfig::Off, None);
         assert!(
-            worker.engine_restart_pending,
+            worker.engine_slot.restart_pending(),
             "Off must discard an in-flight connection using the former system proxy"
         );
         assert_eq!(worker.engine_proxy, Some(old_url));
@@ -6814,7 +7005,7 @@ mod authorization_tests {
         let bad = ProxyConfig::Invalid("Proxy port must be a number".into());
         worker.change_proxy(1, bad.clone(), None);
         assert_eq!(worker.engine_config.proxy, original);
-        assert!(!worker.engine_restart_pending);
+        assert!(!worker.engine_slot.restart_pending());
         assert!(worker.http.client().is_ok());
         let answers: Vec<_> = events.try_iter().collect();
         assert_eq!(answers.len(), 1);
@@ -7406,7 +7597,7 @@ mod authorization_tests {
         commands.send(Command::Shutdown).unwrap();
         runtime.block_on(worker.run(receiver));
         assert!(!worker.signed_in);
-        assert!(!worker.engine_busy);
+        assert!(!worker.engine_slot.is_connecting());
         assert!(worker.playback_grant.is_none());
         assert!(worker.web_tokens.iter().all(Option::is_none));
         assert!(worker.api.account().is_none());
@@ -7429,8 +7620,8 @@ mod authorization_tests {
         verify(&mut worker, ApiSource::Shared, "alice");
         worker.playback_grant = Some(Credentials::with_password("bob", "dummy-reusable-grant"));
         worker.resume_engine();
-        assert!(!worker.engine_busy);
-        assert!(worker.engine.is_none());
+        assert!(!worker.engine_slot.is_connecting());
+        assert!(!worker.engine_slot.is_running());
         assert!(!session_reads_for("bob", worker.api.account().as_ref()));
         assert!(
             events
@@ -7696,7 +7887,7 @@ mod authorization_tests {
     fn a_rootlist_request_before_the_engine_waits_for_it() {
         let (runtime, mut worker, events) = worker("rootlist-before-engine");
         let _entered = runtime.enter();
-        assert!(worker.engine.is_none());
+        assert!(!worker.engine_slot.is_running());
 
         worker.signed_in = true;
         worker.fetch_rootlist();
@@ -7772,7 +7963,7 @@ mod authorization_tests {
         verify(&mut worker, ApiSource::Shared, "alice");
         assert_eq!(worker.premium, Some(true));
         assert!(worker.playback_grant.is_none());
-        assert!(worker.engine.is_none());
+        assert!(!worker.engine_slot.is_running());
 
         worker.fetch_album_types(
             (0..MAX_PENDING_ALBUM_TYPES + 10)
@@ -7830,33 +8021,33 @@ mod authorization_tests {
     fn a_session_that_connects_before_sign_in_can_connect_again() {
         let (_runtime, mut worker, _events) = worker("early-session");
         let generation = worker.album_type_lookup.session_generation;
-        worker.engine_busy = true;
-        worker.engine_restart_pending = true;
+        worker.engine_slot.begin_connect();
+        worker.engine_slot.defer_replace();
 
         worker.on_engine_connected(generation, None, None);
 
-        assert!(!worker.engine_busy);
-        assert!(!worker.engine_restart_pending);
+        assert!(!worker.engine_slot.is_connecting());
+        assert!(!worker.engine_slot.restart_pending());
     }
 
     #[test]
     fn a_stale_session_leaves_the_newer_connect_busy() {
         let (_runtime, mut worker, _events) = worker("stale-session");
         let generation = worker.album_type_lookup.session_generation;
-        worker.engine_busy = true;
+        worker.engine_slot.begin_connect();
 
         worker.on_engine_connected(generation.wrapping_add(1), None, None);
 
-        assert!(worker.engine_busy);
+        assert!(worker.engine_slot.is_connecting());
     }
 
     #[test]
     fn a_playback_browser_result_after_sign_out_cannot_start_an_engine() {
         let (_runtime, mut worker, events) = worker("signed-out");
-        worker.engine_busy = true;
+        worker.engine_slot.begin_connect();
         worker.on_playback_authorized("dummy-streaming-token".into());
-        assert!(!worker.engine_busy);
-        assert!(worker.engine.is_none());
+        assert!(!worker.engine_slot.is_connecting());
+        assert!(!worker.engine_slot.is_running());
         assert!(
             events
                 .try_iter()
@@ -8139,10 +8330,15 @@ mod tests {
 
     #[test]
     fn an_engine_change_during_connect_is_deferred() {
-        let mut pending = false;
-        assert!(defer_engine_replace(true, &mut pending));
-        assert!(pending);
-        assert!(!defer_engine_replace(false, &mut pending));
-        assert!(pending, "finishing the attempt owns clearing the request");
+        let mut slot = EngineSlot::Idle;
+        assert!(!slot.defer_replace());
+        assert!(!slot.restart_pending());
+        slot.begin_connect();
+        assert!(slot.defer_replace());
+        assert!(slot.restart_pending());
+        let (_, restart_after) = slot.finish_connect();
+        assert!(restart_after);
+        assert!(!slot.is_connecting());
+        assert!(!slot.restart_pending());
     }
 }

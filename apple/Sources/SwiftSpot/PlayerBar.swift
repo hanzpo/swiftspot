@@ -240,10 +240,10 @@ struct NowPlaying: View {
                         .font(.callout.weight(.semibold))
                         .lineLimit(1)
                     subtitle
-                    TimelineView(.periodic(from: .now, by: 0.5)) { context in
+                    PlaybackClock(interval: 0.5) { now in
                         let duration = max(player.durationMs ?? 0, 1)
                         let position = model.scrubbing.map { Int($0 * Double(duration)) }
-                            ?? model.position(at: context.date)
+                            ?? model.position(at: now)
                         HStack(spacing: 8) {
                             Text(formatTime(ms: position))
                                 .opacity(hovered || model.scrubbing != nil ? 1 : 0)

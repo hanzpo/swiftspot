@@ -1,10 +1,12 @@
+import CSwiftSpot
 import Foundation
 
-/// A connection to SwiftSpot's local API: one JSON object per line over a
-/// Unix socket. Requests await their reply; events arrive on `onEvent`.
+/// SwiftSpot's engine, linked into this app (src/ffi.rs): requests go in
+/// as JSON and await their reply; events arrive on `onEvent`. The engine
+/// runs on threads of its own and there is one per process.
 final class Client: @unchecked Sendable {
     enum Failure: Error, LocalizedError {
-        case notRunning(String)
+        case notRunning
         case server(String)
         case closed
 
@@ -12,60 +14,48 @@ final class Client: @unchecked Sendable {
             switch self {
             case .notRunning: "SwiftSpot's engine didn't start."
             case .server(let message): message
-            case .closed: "The connection to SwiftSpot closed."
+            case .closed: "SwiftSpot's engine stopped."
             }
         }
     }
 
-    /// Where the running SwiftSpot listens. `SWIFTSPOT_SOCKET` points
-    /// elsewhere, such as at a demo instance.
-    static var defaultPath: String {
-        if let path = ProcessInfo.processInfo.environment["SWIFTSPOT_SOCKET"], !path.isEmpty {
-            return path
-        }
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return support.appendingPathComponent("com.hanzpo.swiftspot/api.sock").path
-    }
+    /// The process's engine, started on first use.
+    @MainActor static let shared = Client()
 
-    private let fd: Int32
+    private var engine: OpaquePointer?
     private let lock = NSLock()
     private var nextID = 1
     private var waiting: [Int: CheckedContinuation<Data, Error>] = [:]
     /// Called on the main actor with each event's name and its data as JSON.
     var onEvent: (@MainActor @Sendable (String, Data) -> Void)?
-    var onClose: (@MainActor @Sendable () -> Void)?
 
-    init(path: String = Client.defaultPath) throws {
-        fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        var address = sockaddr_un()
-        address.sun_family = sa_family_t(AF_UNIX)
-        let bytes = Array(path.utf8)
-        guard bytes.count < MemoryLayout.size(ofValue: address.sun_path) else {
-            close(fd)
-            throw Failure.notRunning(path)
-        }
-        withUnsafeMutableBytes(of: &address.sun_path) { raw in
-            raw.copyBytes(from: bytes)
-            raw[bytes.count] = 0
-        }
-        let connected = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+    private init() {
+        let context = Unmanaged.passRetained(self).toOpaque()
+        engine = swiftspot_start({ context, data, count in
+            guard let context else { return }
+            let client = Unmanaged<Client>.fromOpaque(context).takeUnretainedValue()
+            if let data {
+                client.handle(line: Data(bytes: data, count: count))
+            } else {
+                client.closed()
             }
-        }
-        guard connected == 0 else {
-            close(fd)
-            throw Failure.notRunning(path)
-        }
-        // A write after the engine has gone fails instead of ending the app.
-        var one: Int32 = 1
-        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
-        let thread = Thread { [weak self] in self?.readLoop() }
-        thread.name = "swiftspot-api"
-        thread.start()
+        }, context)
     }
 
-    deinit { close(fd) }
+    var running: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return engine != nil
+    }
+
+    /// Saves the state and stops the engine, for quitting.
+    func stop() {
+        lock.lock()
+        let engine = self.engine
+        self.engine = nil
+        lock.unlock()
+        if let engine { swiftspot_stop(engine) }
+    }
 
     /// Calls `method` and returns its `result` as JSON.
     @MainActor
@@ -104,14 +94,18 @@ final class Client: @unchecked Sendable {
     }
 
     private func encode(id: Int, method: String, params: [String: Any]) throws -> Data {
-        var data = try JSONSerialization.data(
+        try JSONSerialization.data(
             withJSONObject: ["id": id, "method": method, "params": params] as [String: Any])
-        data.append(0x0A)
-        return data
     }
 
     private func write(_ data: Data) -> Bool {
-        data.withUnsafeBytes { Foundation.write(fd, $0.baseAddress, data.count) } == data.count
+        lock.lock()
+        defer { lock.unlock() }
+        guard let engine else { return false }
+        data.withUnsafeBytes { raw in
+            swiftspot_send(engine, raw.bindMemory(to: UInt8.self).baseAddress, raw.count)
+        }
+        return true
     }
 
     private func finish(_ id: Int, _ result: Result<Data, Error>) {
@@ -121,44 +115,134 @@ final class Client: @unchecked Sendable {
         continuation?.resume(with: result)
     }
 
-    private func readLoop() {
-        var buffer = Data()
-        var chunk = [UInt8](repeating: 0, count: 64 * 1024)
-        while true {
-            let count = read(fd, &chunk, chunk.count)
-            if count <= 0 { break }
-            buffer.append(contentsOf: chunk[0..<count])
-            while let newline = buffer.firstIndex(of: 0x0A) {
-                let line = buffer[buffer.startIndex..<newline]
-                buffer.removeSubrange(buffer.startIndex...newline)
-                handle(line: Data(line))
-            }
-        }
+    private func closed() {
         lock.lock()
         let pending = waiting
         waiting.removeAll()
         lock.unlock()
         for continuation in pending.values { continuation.resume(throwing: Failure.closed) }
-        let onClose = onClose
-        Task { @MainActor in onClose?() }
     }
 
+    /// Dispatches a JSON line in a single pass by slicing top-level values
+    /// directly out of the UTF-8 buffer, avoiding `JSONSerialization`
+    /// Foundation-object round-trips before `JSONDecoder` runs.
     private func handle(line: Data) {
-        guard let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else { return }
-        if let event = object["event"] as? String {
-            let payload = (try? JSONSerialization.data(
-                withJSONObject: object["data"] ?? NSNull(), options: [.fragmentsAllowed])) ?? Data()
+        let fields = Self.topLevelFields(in: line)
+        if let eventRange = fields["event"],
+           let event = try? JSONDecoder.api.decode(String.self, from: line[eventRange]) {
+            let payload = fields["data"].map { Data(line[$0]) } ?? Data("null".utf8)
             let onEvent = onEvent
             Task { @MainActor in onEvent?(event, payload) }
             return
         }
-        guard let id = object["id"] as? Int else { return }
-        if let error = object["error"] as? String {
+        guard let idRange = fields["id"],
+              let id = try? JSONDecoder.api.decode(Int.self, from: line[idRange])
+        else { return }
+        if let errorRange = fields["error"],
+           let error = try? JSONDecoder.api.decode(String.self, from: line[errorRange]) {
             finish(id, .failure(Failure.server(error)))
+        } else if let resultRange = fields["result"] {
+            finish(id, .success(Data(line[resultRange])))
         } else {
-            let result = object["result"] ?? NSNull()
-            let data = (try? JSONSerialization.data(withJSONObject: result, options: [.fragmentsAllowed])) ?? Data()
-            finish(id, .success(data))
+            finish(id, .success(Data("null".utf8)))
+        }
+    }
+
+    /// Returns the raw byte range of each top-level member value in a JSON
+    /// object without materialising nested objects or arrays.
+    static func topLevelFields(in data: Data) -> [String: Range<Int>] {
+        data.withUnsafeBytes { raw in
+            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return [:] }
+            let count = raw.count
+            var i = 0
+
+            func skipWhitespace() {
+                while i < count {
+                    switch base[i] {
+                    case 0x20, 0x09, 0x0A, 0x0D: i += 1
+                    default: return
+                    }
+                }
+            }
+
+            func skipString() -> Bool {
+                guard i < count, base[i] == 0x22 else { return false }
+                i += 1
+                while i < count {
+                    let b = base[i]
+                    i += 1
+                    if b == 0x5C { // backslash
+                        if i < count { i += 1 }
+                    } else if b == 0x22 { // closing quote
+                        return true
+                    }
+                }
+                return false
+            }
+
+            func skipValue() -> Range<Int>? {
+                skipWhitespace()
+                guard i < count else { return nil }
+                let start = i
+                switch base[i] {
+                case 0x22: // string
+                    guard skipString() else { return nil }
+                    return start..<i
+                case 0x7B, 0x5B: // '{' or '['
+                    var depth = 0
+                    while i < count {
+                        switch base[i] {
+                        case 0x22:
+                            guard skipString() else { return nil }
+                        case 0x7B, 0x5B:
+                            depth += 1
+                            i += 1
+                        case 0x7D, 0x5D:
+                            depth -= 1
+                            i += 1
+                            if depth == 0 { return start..<i }
+                        default:
+                            i += 1
+                        }
+                    }
+                    return nil
+                default: // number, bool, null
+                    while i < count {
+                        switch base[i] {
+                        case 0x2C, 0x7D, 0x5D, 0x20, 0x09, 0x0A, 0x0D:
+                            return start..<i
+                        default:
+                            i += 1
+                        }
+                    }
+                    return start..<i
+                }
+            }
+
+            skipWhitespace()
+            guard i < count, base[i] == 0x7B else { return [:] } // '{'
+            i += 1
+            var result: [String: Range<Int>] = [:]
+            while i < count {
+                skipWhitespace()
+                if i < count, base[i] == 0x7D { break } // '}'
+                let keyStart = i
+                guard skipString() else { break }
+                // Top-level protocol keys are plain ASCII without escapes.
+                let key = String(decoding: UnsafeBufferPointer(start: base + keyStart + 1, count: i - keyStart - 2), as: UTF8.self)
+                skipWhitespace()
+                guard i < count, base[i] == 0x3A else { break } // ':'
+                i += 1
+                guard let valueRange = skipValue() else { break }
+                result[key] = valueRange
+                skipWhitespace()
+                if i < count, base[i] == 0x2C { // ','
+                    i += 1
+                } else {
+                    break
+                }
+            }
+            return result
         }
     }
 }

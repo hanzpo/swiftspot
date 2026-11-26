@@ -1,0 +1,5 @@
+module CSwiftSpot [system] {
+    header "swiftspot.h"
+    link "swiftspot"
+    export *
+}

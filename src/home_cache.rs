@@ -138,6 +138,90 @@ pub async fn write(path: &std::path::Path, cache: &Cache) -> std::io::Result<()>
     crate::util::replace_file(&temporary, path)
 }
 
+/// Why a podcast episode appears on the Home podcast shelf.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EpisodeReason {
+    /// Started and not finished, with this much left.
+    Continue { left_ms: u32 },
+    /// The show's newest episode, recently released and not yet started.
+    New,
+}
+
+/// How many days after its release an unplayed episode still counts as new.
+const NEW_EPISODE_DAYS: i64 = 30;
+/// The podcast shelf's card limit, as for Recently played.
+pub const PODCAST_CARDS: usize = 16;
+
+/// The episodes on the podcast shelf: those to continue first, then each
+/// show's newest unstarted episode from the last month, each group newest
+/// first. `skip` leaves out shows that are audiobooks or no longer saved.
+pub fn podcast_episodes(
+    podcasts: &[(crate::api::models::Show, Vec<crate::api::models::Episode>)],
+    skip: impl Fn(&crate::api::models::Show) -> bool,
+    today: jiff::civil::Date,
+) -> Vec<(
+    crate::api::models::Show,
+    crate::api::models::Episode,
+    EpisodeReason,
+)> {
+    let oldest_new = today
+        .checked_sub(jiff::Span::new().days(NEW_EPISODE_DAYS))
+        .unwrap_or(today);
+    let released = |episode: &crate::api::models::Episode| {
+        episode
+            .release_date
+            .as_deref()
+            .and_then(|date| date.get(..10))
+            .and_then(|date| date.parse::<jiff::civil::Date>().ok())
+    };
+    let mut continuing = Vec::new();
+    let mut new = Vec::new();
+    for (show, episodes) in podcasts {
+        if skip(show) {
+            continue;
+        }
+        for episode in episodes {
+            if let Some(resume) = &episode.resume_point
+                && !resume.fully_played
+                && resume.resume_position_ms > 0
+            {
+                let left_ms = episode
+                    .duration_ms
+                    .saturating_sub(resume.resume_position_ms);
+                continuing.push((show, episode, EpisodeReason::Continue { left_ms }));
+            }
+        }
+        // Spotify lists a show's episodes newest first.
+        if let Some(newest) = episodes.first()
+            && newest
+                .resume_point
+                .as_ref()
+                .is_none_or(|resume| !resume.fully_played && resume.resume_position_ms == 0)
+            && released(newest).is_some_and(|date| date >= oldest_new)
+        {
+            new.push((show, newest, EpisodeReason::New));
+        }
+    }
+    for group in [&mut continuing, &mut new] {
+        group.sort_by_key(|(_, episode, _)| std::cmp::Reverse(released(episode)));
+    }
+    let mut seen = std::collections::HashSet::new();
+    continuing
+        .into_iter()
+        .chain(new)
+        .filter(|(_, episode, _)| !episode.uri.is_empty() && seen.insert(&episode.uri))
+        .take(PODCAST_CARDS)
+        .map(|(show, episode, reason)| {
+            let mut episode = episode.clone();
+            // A show's episode list leaves out the show; menus need it.
+            if episode.show.is_none() {
+                episode.show = Some(show.clone());
+            }
+            (show.clone(), episode, reason)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

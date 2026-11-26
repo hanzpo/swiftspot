@@ -1,32 +1,29 @@
 # SwiftSpot for SwiftUI
 
-A native SwiftUI front end. It doesn't talk to Spotify itself: the running
-SwiftSpot is the server, keeping the session, playback, the queue and the
-library, and this app drives it over SwiftSpot's local API.
+The native macOS app. SwiftSpot's Rust engine, which keeps the session,
+playback, the queue and the library, is linked into it as a static library
+(`src/ffi.rs`), so the app is one process.
 
 ## Run it
 
-1. Start SwiftSpot as usual (the installed app, or `cargo run`).
-2. `cd apple && swift run`
-
-It connects to `~/Library/Application Support/com.hanzpo.swiftspot/api.sock`.
-To try it without an account, run the demo and point the app at the demo's
-socket:
-
 ```sh
-cargo run --features demo -- --demo &
-SWIFTSPOT_SOCKET=$(ls -d "$TMPDIR"swiftspot-demo-*/state/api.sock | tail -1) swift run
+cargo build --release --lib
+cd apple && swift run
 ```
+
+`apple/install.sh` builds, signs and installs `SwiftSpot.app`.
+`SWIFTSPOT_DATA=/some/folder` keeps a test run's settings, state and
+sign-in in that folder and leaves the media keys to the installed app.
 
 ## The API
 
-One JSON object per line over the Unix socket (`src/server.rs`). A client
+The app hands the engine one JSON object per request (`src/server.rs`). It
 sends `{"id": 1, "method": "…", "params": {…}}` and gets back
-`{"id": 1, "result": …}` or `{"id": 1, "error": "…"}`. The server also
-pushes `{"event": "player", "data": …}` whenever playback changes, apart
-from the position simply moving on, and `lyrics` when the playing song's
-words have been placed in time, and `jam` when the account's Jam, a Jam
-invitation waiting for an answer, or a Jam being started changes.
+`{"id": 1, "result": …}` or `{"id": 1, "error": "…"}`. The engine also pushes `{"event": "player", "data": …}` whenever playback
+changes, apart from the position simply moving on, `page` (`{"page": "…"}`)
+when a page or list finishes loading more data, `lyrics` when the playing
+song's words have been placed in time, and `jam` when the account's Jam, a
+Jam invitation waiting for an answer, or a Jam being started changes.
 
 | Method | Params | Answers |
 | --- | --- | --- |
@@ -77,4 +74,4 @@ character starts, in milliseconds, and when the word ends.
 
 Lists SwiftSpot is still fetching answer with `"loading": true`; ask again.
 The handlers are in `src/app/api.rs`: each reads SwiftSpot's state or queues
-the same action its window would, so a client gets the window's behaviour.
+the same action its window would, so the app gets the old window's behaviour.

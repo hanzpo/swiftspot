@@ -100,8 +100,8 @@ Run the same checks CI runs before submitting:
 
 ```sh
 cargo fmt --all --check
-cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked --all-targets
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace --all-targets
 cargo test --locked --doc
 cargo build --locked --release --lib
 (cd apple && swift build -c release)

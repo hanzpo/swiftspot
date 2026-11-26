@@ -9,6 +9,9 @@ repository = "https://github.com/hanzpo/swiftspot"
 keywords = ["spotify", "music", "librespot", "player"]
 categories = ["multimedia::audio"]
 
+[workspace]
+members = ["tui"]
+
 [lib]
 name = "swiftspot"
 path = "src/lib.rs"

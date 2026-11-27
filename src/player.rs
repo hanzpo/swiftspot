@@ -901,7 +901,6 @@ fn sink_builder(
     audio: Arc<AudioControl>,
 ) -> SinkAndVolume {
     let device = config.audio_device.clone();
-    let buffer_ms = config.buffer_ms;
     let eq = Arc::clone(&config.eq);
     let karaoke = Arc::clone(&config.karaoke);
     let report: ErrorHook = Arc::new(move |message: String| {
@@ -928,13 +927,7 @@ fn sink_builder(
     let ceiling = mixer.get_soft_volume();
     (
         Box::new(move || {
-            let sink = Box::new(RodioSink::new(
-                device,
-                report,
-                volume,
-                buffer_ms,
-                Arc::clone(&audio),
-            ));
+            let sink = Box::new(RodioSink::new(device, report, volume, Arc::clone(&audio)));
             Box::new(EqSink::new(sink, audio, ceiling, false, eq, karaoke)) as Box<dyn Sink>
         }),
         Box::new(NoOpVolume),
@@ -1669,9 +1662,6 @@ mod tests {
             audio_backend::find(Some("rodio".into())).is_none(),
             "librespot's rodio backend is not built in"
         );
-        if cfg!(target_os = "linux") {
-            assert!(librespot_backend(Some("pulseaudio")).is_some());
-        }
     }
 
     /// #268: a dropped session leaves the song playing or paused where it

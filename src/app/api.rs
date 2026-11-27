@@ -1629,7 +1629,7 @@ impl App {
             "off"
         };
         json!({
-            "available": cfg!(target_os = "macos"),
+            "available": true,
             "on": self.karaoke.enabled(),
             "level": self.settings.karaoke_vocal_level,
             "status": status,

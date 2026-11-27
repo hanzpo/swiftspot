@@ -9,7 +9,6 @@
 
 pub mod align;
 pub mod audio;
-#[cfg(target_os = "macos")]
 pub mod coreml;
 
 use std::path::{Path, PathBuf};
@@ -153,7 +152,6 @@ fn resample(mono: &[f32]) -> Vec<f32> {
 }
 
 /// A song to place the words of, and where to say how it went.
-#[cfg(target_os = "macos")]
 pub struct Job {
     pub track: Option<audio::Track>,
     pub lines: Vec<(u32, String)>,
@@ -169,13 +167,11 @@ pub struct Job {
 
 /// Places words on a thread of its own, a song at a time. The models stay
 /// loaded while songs keep coming and are let go once they stop.
-#[cfg(target_os = "macos")]
 #[derive(Clone)]
 pub struct Placer {
     jobs: std::sync::mpsc::Sender<Job>,
 }
 
-#[cfg(target_os = "macos")]
 impl Placer {
     /// How long the models are kept with nothing to do.
     const IDLE: std::time::Duration = std::time::Duration::from_secs(120);
@@ -220,7 +216,6 @@ impl Placer {
 
 /// The job to run next: the latest song asked for while it plays, or else
 /// the latest asked for ahead. Older ones of the same kind are let go.
-#[cfg(target_os = "macos")]
 fn next_job(pending: &mut Vec<Job>) -> Job {
     let ahead = pending.iter().all(|job| job.ahead);
     let chosen = pending
@@ -237,7 +232,6 @@ fn next_job(pending: &mut Vec<Job>) -> Job {
     job
 }
 
-#[cfg(target_os = "macos")]
 fn run(
     job: &mut Job,
     aligner: &mut Option<coreml::Aligner>,
@@ -319,7 +313,6 @@ mod tests {
         assert!(voiced[3..6].iter().all(|v| *v));
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn the_playing_song_goes_before_songs_made_ready_ahead() {
         let let_go = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -363,7 +356,6 @@ mod tests {
     /// `KARAOKE_MODEL` are their packages, `KARAOKE_SONG` raw stereo `f32`
     /// at 44.1 kHz, and `WORDS_LINES` the lyrics, a line's start in
     /// milliseconds, a tab, then its words.
-    #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "needs the models and a song"]
     fn a_real_song_has_its_words_placed() {

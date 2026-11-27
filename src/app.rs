@@ -235,12 +235,8 @@ impl PendingPaste {
 pub struct AppOptions {
     /// Demo and isolated tests must not read or migrate real Spotify grants.
     pub restore_sign_in: bool,
-    /// Register the MPRIS media-control service and follow the desktop's
-    /// light or dark preference (Linux).
+    /// Register with macOS Now Playing and the media keys.
     pub media_controls: bool,
-    /// Register the system-tray item. Off on macOS, where closing the window
-    /// quits instead of hiding to the menu bar.
-    pub tray: bool,
 }
 
 impl Default for AppOptions {
@@ -248,7 +244,6 @@ impl Default for AppOptions {
         Self {
             restore_sign_in: true,
             media_controls: true,
-            tray: !cfg!(target_os = "macos"),
         }
     }
 }
@@ -315,14 +310,10 @@ pub struct App {
     pub hide_intent: bool,
     /// The outer loop should recreate the hidden window.
     pub wants_show: bool,
-    /// The window should close and reopen at once: Windows fixes a window's
-    /// decorations when it is created.
-    pub reopen_intent: bool,
     /// Started with `--background` for a front end: no window at first, and
     /// closing the window keeps the app running.
     pub serve_in_background: bool,
     /// The local API front ends such as external clients drive (src/server.rs).
-    #[cfg(unix)]
     api: Option<crate::server::Server>,
     /// A start-up check of the saved playlists against the account's
     /// playlist list over the streaming session, before reading them all
@@ -332,7 +323,6 @@ pub struct App {
     /// to the library's list once it does, instead of reading it again.
     pending_playlist_details: HashMap<String, PlaylistDetailChanges>,
     /// What the API's clients were last told.
-    #[cfg(unix)]
     api_pushed: api::Pushed,
     /// Sample data is loaded; Spotify requests are disabled.
     pub offline: bool,
@@ -566,13 +556,7 @@ pub struct App {
     queue_start_pending: Option<Target>,
     pub playlist_busy: bool,
     pub quit_requested: bool,
-    /// Wheel step, Linux touchpad scale and glide, and the axis a gesture
-    /// holds, for the window on screen.
     /// How each table is sorted, per page, for as long as the app runs.
-    /// The rows picked out in a track table, and the page they belong to.
-    /// One table at a time: picking rows on another page replaces it.
-    /// The page it belongs to, what that page's list looked like when the
-    /// rows were picked, and the rows.
     pub table_sorts: HashMap<Page, TableSort>,
     /// User ids resolved to display names; `None` while unknown, so an id
     /// is asked about only once per run.
@@ -690,7 +674,6 @@ impl App {
         }
         let karaoke = crate::karaoke::Karaoke::shared();
         karaoke.set_vocal_level(settings.karaoke_vocal_level);
-        #[cfg(target_os = "macos")]
         if crate::karaoke::model::installed(&dirs.karaoke_dir()) {
             karaoke.set_loader(Some(karaoke_loader(&dirs)));
         }
@@ -726,7 +709,6 @@ impl App {
         let media_controls = options
             .media_controls
             .then(|| MediaControls::start(media_app(), move || wake.wake()));
-        #[cfg(target_os = "macos")]
         let media_controls = {
             let mut media_controls = media_controls;
             if let (Some(controls), Some(track)) =
@@ -765,13 +747,10 @@ impl App {
             window_hidden: false,
             hide_intent: false,
             wants_show: false,
-            reopen_intent: false,
             serve_in_background: false,
             playlists_check: None,
             pending_playlist_details: HashMap::new(),
-            #[cfg(unix)]
             api: None,
-            #[cfg(unix)]
             api_pushed: Default::default(),
             offline: false,
             locale,
@@ -966,7 +945,6 @@ impl App {
 
     /// Connects a front end to the API (src/server.rs). Its replies and
     /// events arrive on the receiver.
-    #[cfg(unix)]
     pub fn connect_front_end(
         &mut self,
         waker: &crate::backend::Waker,
@@ -1567,7 +1545,6 @@ impl App {
             return;
         }
         if self.user_names.get(&id) != Some(&name) {
-            #[cfg(unix)]
             {
                 let shown: Vec<String> = self
                     .playlist_pages
@@ -1768,7 +1745,6 @@ impl App {
             if self.offline {
                 continue;
             }
-            #[cfg(unix)]
             if let Some(page) = api::page_for_event(&event) {
                 self.note_api_page(page);
             }
@@ -1877,14 +1853,9 @@ impl App {
                     }
                 },
                 Event::KaraokeModel(result) => match result {
-                    #[cfg(target_os = "macos")]
                     Ok(_) => {
                         self.karaoke_model = KaraokeModelState::Idle;
                         self.karaoke.set_loader(Some(karaoke_loader(&self.dirs)));
-                    }
-                    #[cfg(not(target_os = "macos"))]
-                    Ok(_) => {
-                        self.karaoke_model = KaraokeModelState::Idle;
                     }
                     Err(error) => {
                         self.karaoke.set_enabled(false);
@@ -3080,9 +3051,6 @@ impl App {
     }
 
     fn media_art_file_headless(&mut self, waker: &Waker, url: &str) -> Option<PathBuf> {
-        if cfg!(target_os = "linux") {
-            return None;
-        }
         if let Some((known, file)) = &self.media_art
             && known == url
         {
@@ -4343,7 +4311,6 @@ impl App {
     }
 
     fn handle_api(&mut self, mut response: ApiResponse) {
-        #[cfg(unix)]
         if let Some(page) = api::page_for_response(&response) {
             self.note_api_page(page);
         }
@@ -8720,7 +8687,6 @@ impl App {
                     self.karaoke_model = KaraokeModelState::Idle;
                 }
                 // A model put in place since startup needs no fetching.
-                #[cfg(target_os = "macos")]
                 if on
                     && !self.karaoke.has_model()
                     && crate::karaoke::model::installed(&self.dirs.karaoke_dir())
@@ -8859,7 +8825,6 @@ impl App {
     /// the caller should sleep before running again, or `None` when the
     /// engine can sleep indefinitely until woken by an external event.
     pub fn engine_step(&mut self, waker: &Waker) -> Option<Duration> {
-        #[cfg(unix)]
         self.serve_api();
         self.handle_events();
         self.open_pending_link();
@@ -8868,7 +8833,6 @@ impl App {
         self.note_listening();
         self.apply_actions_with(None);
         self.sync_media_controls_headless(waker);
-        #[cfg(unix)]
         self.push_api_events();
         self.next_engine_wake(tick_wake)
     }
@@ -9257,7 +9221,6 @@ fn increase_playlist_total(playlist: &mut Playlist, added: u32) {
 }
 
 /// Loads karaoke's vocal model from where it is fetched to.
-#[cfg(target_os = "macos")]
 fn karaoke_loader(dirs: &AppDirs) -> crate::karaoke::Loader {
     let package = crate::karaoke::model::package(&dirs.karaoke_dir());
     std::sync::Arc::new(move || crate::karaoke::coreml::load(&package))
@@ -9525,7 +9488,6 @@ fn cover_error(locale: Locale, error: &crate::api::client::ApiError) -> String {
     }
 }
 
-#[cfg(unix)]
 mod api;
 mod radio;
 
@@ -9597,7 +9559,6 @@ mod engine_tests {
             AppOptions {
                 media_controls: false,
                 restore_sign_in: false,
-                tray: false,
             },
         );
         app.auth = AuthStatus::SignedOut;
@@ -9610,7 +9571,6 @@ mod engine_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[cfg(unix)]
     #[test]
     fn engine_pushes_a_page_event_when_an_api_answer_arrives() {
         let dir = std::env::temp_dir().join(format!("ss-pg-{:08x}", rand::random::<u32>()));
@@ -9628,7 +9588,6 @@ mod engine_tests {
             AppOptions {
                 media_controls: false,
                 restore_sign_in: false,
-                tray: false,
             },
         );
         app.auth = AuthStatus::SignedOut;
@@ -9649,7 +9608,6 @@ mod engine_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_found_adder_name_pushes_the_playlists_that_show_it() {
         let dir = std::env::temp_dir().join(format!("ss-un-{:08x}", rand::random::<u32>()));
@@ -9667,7 +9625,6 @@ mod engine_tests {
             AppOptions {
                 media_controls: false,
                 restore_sign_in: false,
-                tray: false,
             },
         );
         app.auth = AuthStatus::SignedOut;
@@ -9697,7 +9654,6 @@ mod engine_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[cfg(unix)]
     #[test]
     fn engine_pushes_only_the_saved_flags_that_changed() {
         let dir = std::env::temp_dir().join(format!("ss-sv-{:08x}", rand::random::<u32>()));
@@ -9715,7 +9671,6 @@ mod engine_tests {
             AppOptions {
                 media_controls: false,
                 restore_sign_in: false,
-                tray: false,
             },
         );
         app.auth = AuthStatus::SignedOut;
@@ -9780,7 +9735,6 @@ mod tests {
             AppOptions {
                 media_controls: false,
                 restore_sign_in: false,
-                tray: false,
             },
         )
     }
@@ -9800,7 +9754,6 @@ mod tests {
             AppOptions {
                 media_controls: false,
                 restore_sign_in: false,
-                tray: false,
             },
         );
         app.local_ready = true;
@@ -11405,7 +11358,6 @@ mod tests {
             AppOptions {
                 media_controls: false,
                 restore_sign_in: false,
-                tray: false,
             },
         );
         assert!(queue_uris(&app).1.is_empty());

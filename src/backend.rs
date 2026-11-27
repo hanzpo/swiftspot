@@ -1196,7 +1196,7 @@ pub enum LocalPlayback {
     Failed(String),
 }
 
-/// Background services (the runtime, MPRIS/Now Playing, the embedded FFI bridge)
+/// Background services (the runtime, Now Playing, the embedded FFI bridge)
 /// wake the engine loop via [`Waker::wake`].
 #[derive(Clone, Default)]
 pub struct Waker {
@@ -1826,7 +1826,6 @@ struct Worker {
     /// A pickup in flight: the load to repeat and how often it was tried.
     resume_verify: Option<(PlaybackResume, u8)>,
     /// Places lyrics' words in songs, once the first song asks.
-    #[cfg(target_os = "macos")]
     words: Option<crate::words::Placer>,
 }
 
@@ -1890,7 +1889,6 @@ impl Worker {
             engine_retry_token: 0,
             resume: None,
             resume_verify: None,
-            #[cfg(target_os = "macos")]
             words: None,
         }
     }
@@ -4220,7 +4218,6 @@ impl Worker {
     fn fetch_karaoke_model(&self) {
         let events = self.events.clone();
         let waker = self.waker.clone();
-        #[cfg(target_os = "macos")]
         {
             let http = self.http.client();
             let dir = self.dirs.karaoke_dir();
@@ -4240,13 +4237,6 @@ impl Worker {
                 let _ = events.send(Event::KaraokeModel(result));
                 waker.wake();
             });
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = events.send(Event::KaraokeModel(Err(
-                "Karaoke needs a Mac with Apple silicon".into(),
-            )));
-            waker.wake();
         }
     }
 
@@ -4298,7 +4288,6 @@ impl Worker {
             let _ = events.send(Event::Words { uri, key, result });
             waker.wake();
         };
-        #[cfg(target_os = "macos")]
         {
             let placer = self
                 .words
@@ -4359,11 +4348,6 @@ impl Worker {
                     Err(error) => tell(uri, key, Err(error)),
                 }
             });
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = (lines, ahead);
-            tell(uri, key, Err("Word-by-word lyrics need a Mac".into()));
         }
     }
 
@@ -5754,7 +5738,6 @@ fn write_cached_playlist_file(
         let mut writer = std::io::BufWriter::new(file);
         serde_json::to_writer(&mut writer, cached).map_err(std::io::Error::other)?;
         writer.flush()?;
-        // Windows requires the temporary file to be closed before replacement.
         drop(writer);
         crate::util::replace_file(&temporary, path)
     })();

@@ -29,7 +29,7 @@ fastframe-log = { git = "https://github.com/crmne/fastframe", tag = "v0.17.1" }
 # The audio device stream: it pauses, so a paused player costs no CPU (#636),
 # follows the default output and reopens after a failure.
 fastframe-audio = { git = "https://github.com/crmne/fastframe", tag = "v0.17.1" }
-# The desktop's media controls: Now Playing on macOS, MPRIS on Linux.
+# Now Playing and the media keys on macOS.
 fastframe-now-playing = { git = "https://github.com/crmne/fastframe", tag = "v0.17.1" }
 # webp because Spotify's CDN serves some playlist covers as WebP.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
@@ -73,7 +73,6 @@ pbkdf2 = "0.12"
 aes = "0.8"
 ctr = "0.9"
 
-[target.'cfg(target_os = "macos")'.dependencies]
 # Karaoke's vocal model on the Neural Engine (src/karaoke/coreml.rs).
 objc2-core-ml = { version = "0.3", default-features = false, features = ["std", "MLModel", "MLModelConfiguration", "MLMultiArray", "MLFeatureProvider", "MLDictionaryFeatureProvider", "MLFeatureValue", "MLModel_MLModelCompilation", "block2"] }
 block2 = "0.6"
@@ -81,14 +80,6 @@ half = "2"
 apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
 objc2 = { version = "0.6", features = ["exception"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSDate", "NSObjCRuntime", "NSRunLoop", "NSString", "NSThread", "NSDictionary", "NSData", "NSURL", "NSArray", "NSValue", "NSError"] }
-
-[target.'cfg(windows)'.dependencies]
-windows-native-keyring-store = { version = "1.1", default-features = false }
-windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_System_Threading"] }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-crypto-rust"] }
-librespot-playback = { version = "0.8", default-features = false, features = ["pulseaudio-backend", "rustls-tls-native-roots"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }

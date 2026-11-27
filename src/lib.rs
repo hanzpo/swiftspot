@@ -10,7 +10,6 @@ pub mod auth;
 pub mod backend;
 pub mod credentials;
 pub mod eq;
-#[cfg(unix)]
 pub mod ffi;
 pub mod file_writer;
 pub mod history;
@@ -31,7 +30,6 @@ pub mod paths;
 pub mod player;
 pub mod playlist_cover;
 pub mod resample;
-#[cfg(unix)]
 pub mod server;
 pub mod session_reads;
 pub mod settings;

@@ -226,13 +226,11 @@ fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
     let mut file = options.open(path)?;
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
@@ -241,19 +239,15 @@ fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     file.sync_all()
 }
 
-/// Waits until the file that replaced `path` is on the disk. On Unix a
-/// rename lasts through a power cut only once its folder is synced; on
-/// Windows `replace_file` already writes the move through.
+/// Waits until the file that replaced `path` is on the disk: a rename lasts
+/// through a power cut only once its folder is synced.
 fn sync_folder(path: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
     if let Some(folder) = path
         .parent()
         .filter(|folder| !folder.as_os_str().is_empty())
     {
         std::fs::File::open(folder)?.sync_all()?;
     }
-    #[cfg(not(unix))]
-    let _ = path;
     Ok(())
 }
 
@@ -489,7 +483,6 @@ mod tests {
 
     /// The history is readable by its owner only, even when it replaces a
     /// file others could read and over a temporary file a failed save left.
-    #[cfg(unix)]
     #[test]
     fn the_history_is_kept_from_other_accounts() {
         use std::os::unix::fs::PermissionsExt;

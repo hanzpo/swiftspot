@@ -86,7 +86,7 @@ impl ThemeChoice {
 pub enum ProxyMode {
     /// No proxy, ignoring environment and OS proxy settings.
     Off,
-    /// Environment variables and, on macOS and Windows, the OS proxy.
+    /// Environment variables and the macOS proxy settings.
     #[default]
     System,
     /// A configured HTTP proxy.
@@ -149,8 +149,8 @@ pub struct Settings {
     /// librespot backend name; `None` picks the platform default.
     pub audio_backend: Option<String>,
     pub audio_device: Option<String>,
-    /// Windows output buffer in milliseconds. Smaller values may click under
-    /// load; larger values delay playback controls.
+    /// How long, in milliseconds, an interrupt waits at most for queued
+    /// audio to fade out.
     /// See [`crate::sink::DEFAULT_BUFFER_MS`].
     #[serde(default = "default_buffer_ms")]
     pub audio_buffer_ms: u32,
@@ -199,9 +199,6 @@ pub struct Settings {
     pub library_sort: std::collections::BTreeMap<LibraryShelf, LibrarySort>,
     /// Interface zoom, egui's zoom factor; Ctrl+plus/minus changes it.
     pub zoom: f32,
-    /// Windows: draw SwiftSpot's own title bar and window buttons instead of
-    /// the standard Windows frame.
-    pub custom_titlebar: bool,
     /// The equalizer shapes local playback.
     pub eq_on: bool,
     /// The preamp, in decibels, never above zero.
@@ -284,7 +281,6 @@ impl Default for Settings {
             sidebar_order: Vec::new(),
             library_sort: std::collections::BTreeMap::new(),
             zoom: 1.0,
-            custom_titlebar: false,
             eq_on: false,
             eq_preamp_db: 0.0,
             eq_bands_db: [0.0; 10],
@@ -380,8 +376,8 @@ impl Settings {
     pub fn load(path: &Path) -> Self {
         match std::fs::read_to_string(path) {
             Ok(text) => {
-                // A file edited in Notepad or Windows PowerShell can start with
-                // a byte order mark, which JSON does not allow.
+                // A file saved by some editors starts with a byte order
+                // mark, which JSON does not allow.
                 let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
                 let mut settings = serde_json::from_str(text).unwrap_or_else(|error| {
                     log::warn!("settings at {} are unreadable: {error}", path.display());
@@ -416,13 +412,7 @@ impl Settings {
     }
 
     pub fn platform_backend(&self) -> Option<String> {
-        self.audio_backend.clone().or_else(|| {
-            if cfg!(target_os = "linux") {
-                Some("pulseaudio".to_string())
-            } else {
-                None
-            }
-        })
+        self.audio_backend.clone()
     }
 
     pub fn remember_search(&mut self, query: &str) {
@@ -764,7 +754,7 @@ mod tests {
         assert_eq!(old.volume, 12345);
     }
 
-    /// Notepad and Windows PowerShell can save UTF-8 with a byte order mark.
+    /// Some editors save UTF-8 with a byte order mark.
     /// A file edited that way, as the Home shelves guide asks, is still read
     /// rather than dropped as unreadable and replaced with the defaults.
     #[test]

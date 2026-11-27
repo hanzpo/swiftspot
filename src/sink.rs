@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use fastframe_audio::{Buffer, BufferSize, Maintained, OutputOptions, Render};
+use fastframe_audio::{Maintained, OutputOptions, Render};
 use librespot_playback::audio_backend::{Sink, SinkError, SinkResult};
 use librespot_playback::convert::Converter;
 use librespot_playback::decoder::AudioPacket;
@@ -38,7 +38,7 @@ pub const NO_DEVICE: &str =
     "No audio output device was found. Connect or enable one, then press play again.";
 
 /// Opens the output: the device by name, else the default.
-type Opener = fn(Option<&str>, u32, &AudioControl) -> Result<Output, OpenError>;
+type Opener = fn(Option<&str>, &AudioControl) -> Result<Output, OpenError>;
 
 /// Maximum queued rodio chunks before `write` blocks, about 200 ms of audio.
 const QUEUE_LIMIT: usize = 12;
@@ -77,8 +77,7 @@ impl Stall {
     fn observe(&mut self, consumed: u64, now: Instant) -> bool {
         // No wait lasts anywhere near `STALL`, so a gap that long is time
         // this thread did not run: the system slept or suspended the app,
-        // and the output had no chance to play either. On Windows `Instant`
-        // counts that time.
+        // and the output had no chance to play either.
         let asleep = now.duration_since(self.seen) >= STALL;
         self.seen = now;
         if consumed != self.consumed || asleep {
@@ -101,14 +100,11 @@ const TRANSPORT_FADE: Duration = Duration::from_millis(50);
 /// Smooths slider and mute changes at the device's sample rate.
 const VOLUME_RAMP: Duration = Duration::from_millis(30);
 
-/// Default Windows device buffer length in milliseconds.
-///
-/// Small platform defaults can click under load (#88). A 100 ms buffer avoids
-/// these underruns while keeping controls responsive.
+/// Default output buffer length in milliseconds: how long an interrupt
+/// waits at most for queued audio to fade out.
 pub const DEFAULT_BUFFER_MS: u32 = 100;
 
-/// Allowed Windows device buffer range. Lower values can click; higher values
-/// delay playback controls.
+/// Allowed output buffer range.
 pub const BUFFER_MS_RANGE: std::ops::RangeInclusive<u32> = 20..=500;
 
 /// Coordinates an explicit track replacement with the audio thread.
@@ -498,9 +494,6 @@ pub struct RodioSink {
     /// Player volume, applied at output so changes affect queued audio.
     volume: Box<dyn VolumeGetter + Send>,
     applied_volume: f32,
-    /// How much sound to ask the device to hold, in milliseconds. Taken
-    /// when the stream opens, so a change lands with the next restart.
-    buffer_ms: u32,
     control: Arc<AudioControl>,
     open: Opener,
 }
@@ -678,7 +671,6 @@ impl RodioSink {
         device: Option<String>,
         on_error: ErrorHook,
         volume: Box<dyn VolumeGetter + Send>,
-        buffer_ms: u32,
         control: Arc<AudioControl>,
     ) -> Self {
         Self {
@@ -687,7 +679,6 @@ impl RodioSink {
             on_error,
             volume,
             applied_volume: -1.0,
-            buffer_ms,
             control,
             open: open_output,
         }
@@ -712,11 +703,7 @@ impl RodioSink {
                 }
             }
             None => {
-                self.output = Some((self.open)(
-                    self.device.as_deref(),
-                    self.buffer_ms,
-                    &self.control,
-                )?);
+                self.output = Some((self.open)(self.device.as_deref(), &self.control)?);
                 self.applied_volume = -1.0;
             }
         }
@@ -745,7 +732,6 @@ impl Sink for RodioSink {
     /// where librespot expects it, so playback stops with a message and
     /// the app stays up as a Connect remote.
     fn start(&mut self) -> SinkResult<()> {
-        take_precedence();
         if let Err(error) = self.open_if_needed() {
             log::debug!("audio output not open at start: {error}");
             return Ok(());
@@ -895,25 +881,6 @@ impl Sink for RodioSink {
     }
 }
 
-/// Raises the Windows decoder thread one step above normal to prevent queued
-/// audio from running out under load (#88).
-///
-/// Linux requires rtkit; CoreAudio owns its real-time callback on macOS.
-#[cfg(windows)]
-fn take_precedence() {
-    use windows_sys::Win32::System::Threading::{
-        GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_ABOVE_NORMAL,
-    };
-    // SAFETY: the current thread's pseudo-handle needs no closing, and the
-    // call takes nothing else.
-    unsafe {
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
-    }
-}
-
-#[cfg(not(windows))]
-fn take_precedence() {}
-
 #[derive(Debug, thiserror::Error)]
 enum OpenError {
     #[error("{NO_DEVICE}")]
@@ -933,32 +900,23 @@ impl From<fastframe_audio::OpenError> for OpenError {
 
 /// What the output asks of the device: Spotify's stereo 44.1 kHz first, so
 /// nothing is converted, then whatever the device takes. A named device
-/// that has gone falls back to the default. The fixed buffer addresses
-/// Windows shared-mode underruns (#88); CoreAudio, ALSA, PulseAudio and
-/// PipeWire keep their proven driver-selected periods.
-fn output_options(preferred: Option<&str>, buffer_ms: u32) -> OutputOptions {
+/// that has gone falls back to the default. CoreAudio keeps its own
+/// buffer size.
+fn output_options(preferred: Option<&str>) -> OutputOptions {
     let device = match preferred.map(str::trim).filter(|name| !name.is_empty()) {
         Some(name) => fastframe_audio::Device::Named(name.to_string()),
         None => fastframe_audio::Device::Default,
     };
-    let buffer_ms = buffer_ms.clamp(*BUFFER_MS_RANGE.start(), *BUFFER_MS_RANGE.end());
     OutputOptions {
         device,
         channels: NUM_CHANNELS as u16,
         sample_rate: Some(SAMPLE_RATE),
-        buffer: Buffer::FixedOnWindows(BufferSize::Duration(Duration::from_millis(u64::from(
-            buffer_ms,
-        )))),
         follow_default: true,
         ..OutputOptions::default()
     }
 }
 
-fn open_output(
-    preferred: Option<&str>,
-    buffer_ms: u32,
-    control: &AudioControl,
-) -> Result<Output, OpenError> {
+fn open_output(preferred: Option<&str>, control: &AudioControl) -> Result<Output, OpenError> {
     let made = MixerSlot::default();
     let volume = Arc::new(AtomicU32::new(0.0f32.to_bits()));
     let render = MixerRender {
@@ -968,7 +926,7 @@ fn open_output(
         format: (0, 0),
         made: Arc::clone(&made),
     };
-    let device = fastframe_audio::Output::open(output_options(preferred, buffer_ms), render)?;
+    let device = fastframe_audio::Output::open(output_options(preferred), render)?;
     log::info!("audio output: {}", device.device_name());
     // The open configured the renderer, which made the mixer.
     let (mixer, sample_rate) = made
@@ -1082,23 +1040,12 @@ mod tests {
                 .all(|pair| pair[0] == pair[1])
         );
     }
-    /// The buffer setting reaches the device on Windows only (#88), and a
-    /// settings file with a wild number in it still opens a stream: the
-    /// range is the range whoever wrote the file thought of.
-    #[test]
-    fn the_buffer_follows_the_setting_within_its_range() {
-        let buffer = |ms| output_options(None, ms).buffer;
-        let fixed = |ms| Buffer::FixedOnWindows(BufferSize::Duration(Duration::from_millis(ms)));
-        assert_eq!(buffer(100), fixed(100));
-        assert_eq!(buffer(0), fixed(u64::from(*BUFFER_MS_RANGE.start())));
-        assert_eq!(buffer(100_000), fixed(u64::from(*BUFFER_MS_RANGE.end())));
-    }
 
     /// Spotify's own format is asked for first, so nothing is converted, and
     /// a blank device name means the system's default.
     #[test]
     fn the_output_asks_for_spotifys_format_on_the_chosen_device() {
-        let options = output_options(Some("USB DAC"), DEFAULT_BUFFER_MS);
+        let options = output_options(Some("USB DAC"));
         assert_eq!(
             options.device,
             fastframe_audio::Device::Named("USB DAC".into())
@@ -1108,7 +1055,7 @@ mod tests {
         assert!(options.follow_default);
         for blank in [None, Some(""), Some("  ")] {
             assert_eq!(
-                output_options(blank, DEFAULT_BUFFER_MS).device,
+                output_options(blank).device,
                 fastframe_audio::Device::Default
             );
         }
@@ -1155,7 +1102,6 @@ mod tests {
             Some("no such device".into()),
             Arc::new(move |message| *store.lock().unwrap() = Some(message)),
             Box::new(librespot_playback::mixer::NoOpVolume),
-            DEFAULT_BUFFER_MS,
             AudioControl::new(DEFAULT_BUFFER_MS),
         );
         match sink.start() {
@@ -1177,7 +1123,6 @@ mod tests {
             None,
             Arc::new(|_| {}),
             Box::new(librespot_playback::mixer::NoOpVolume),
-            DEFAULT_BUFFER_MS,
             AudioControl::new(DEFAULT_BUFFER_MS),
         );
         assert!(sink.start().is_ok());
@@ -1208,7 +1153,7 @@ mod tests {
         assert!(sink.stop().is_ok());
     }
 
-    fn no_device(_: Option<&str>, _: u32, _: &AudioControl) -> Result<Output, OpenError> {
+    fn no_device(_: Option<&str>, _: &AudioControl) -> Result<Output, OpenError> {
         Err(OpenError::NoDevice)
     }
 
@@ -1226,7 +1171,6 @@ mod tests {
                 None,
                 Arc::new(move |message| store.lock().unwrap().push(message)),
                 Box::new(librespot_playback::mixer::NoOpVolume),
-                DEFAULT_BUFFER_MS,
                 AudioControl::new(DEFAULT_BUFFER_MS),
             )
         };
@@ -1311,7 +1255,6 @@ mod tests {
             None,
             Arc::new(|error| panic!("no audio device should be opened: {error}")),
             Box::new(librespot_playback::mixer::NoOpVolume),
-            DEFAULT_BUFFER_MS,
             control,
         );
         let mut converter = Converter::new(None);

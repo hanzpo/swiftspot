@@ -62,7 +62,6 @@ impl Engine {
             Some(_) => AppOptions {
                 restore_sign_in: false,
                 media_controls: false,
-                tray: false,
             },
             None => AppOptions::default(),
         };

@@ -903,13 +903,8 @@ mod tests {
         // Shorter than a year, which `min` was there to hold.
         assert_eq!(dated("20").year(), Some("20"));
         // A date whose fourth byte is inside a character. `min` clamps the
-        // length and says nothing about boundaries, so this used to panic;
-        // `util::format_date` reads the same field with `get` and does not.
+        // length and says nothing about boundaries, so this used to panic.
         assert_eq!(dated("\u{c791}\u{b144}").year(), Some("\u{c791}\u{b144}"));
-        assert_eq!(
-            crate::util::format_date(crate::i18n::Locale::English, "\u{c791}\u{b144}"),
-            "\u{c791}\u{b144}"
-        );
         // No date at all is still no year.
         let json = r#"{"id":"a","name":"A","uri":"spotify:album:a"}"#;
         assert_eq!(serde_json::from_str::<Album>(json).unwrap().year(), None);

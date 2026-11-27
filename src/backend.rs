@@ -23,7 +23,7 @@ use crate::credentials::{
     Store as CredentialStore,
 };
 use crate::http::Http;
-use crate::images::{ArtLoader, accent_color};
+use crate::images::ArtLoader;
 use crate::model::PlaylistCache;
 use crate::paths::AppDirs;
 use crate::player::{
@@ -856,9 +856,6 @@ pub enum Command {
         shared_lease: CredentialLease,
         personal_lease: CredentialLease,
     },
-    Accent {
-        url: String,
-    },
     Shutdown,
     /// Internal: the Web API browser flow produced a grant.
     WebSignedIn {
@@ -1106,14 +1103,6 @@ pub enum Event {
     },
     Local(Box<LocalState>),
     Api(Box<ApiResponse>),
-    Accent {
-        url: String,
-        color: [u8; 3],
-    },
-    /// The cover could not be fetched, so its colour may be asked for again.
-    AccentUnavailable {
-        url: String,
-    },
     Error(String),
     /// Track lyrics, or `None` when unavailable.
     Lyrics {
@@ -1410,7 +1399,7 @@ impl Backend {
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .push(request.clone());
         }
-        if self.offline && !matches!(command, Command::Accent { .. } | Command::Shutdown) {
+        if self.offline && !matches!(command, Command::Shutdown) {
             return;
         }
         let _ = self.commands.send(command);
@@ -2275,7 +2264,6 @@ impl Worker {
                     }
                     self.emit(Event::Api(response));
                 }
-                Command::Accent { url } => self.accent(url),
                 Command::WebSignedIn {
                     source,
                     token,
@@ -4550,29 +4538,6 @@ impl Worker {
             });
         })
         .abort_handle()
-    }
-
-    fn accent(&self, url: String) {
-        let art = self.art.clone();
-        let events = self.events.clone();
-        let waker = self.waker.clone();
-        tokio::spawn(async move {
-            let Ok(bytes) = art.fetch(&url).await else {
-                let _ = events.send(Event::AccentUnavailable { url });
-                waker.wake();
-                return;
-            };
-            // A cover that cannot be decoded or has no colour answers the
-            // same way every time, so it stays unanswered.
-            let color = tokio::task::spawn_blocking(move || accent_color(&bytes))
-                .await
-                .ok()
-                .flatten();
-            if let Some(color) = color {
-                let _ = events.send(Event::Accent { url, color });
-                waker.wake();
-            }
-        });
     }
 }
 

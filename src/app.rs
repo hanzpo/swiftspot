@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use crate::api::PlayRequest;
 use crate::api::models::{
     Album, Artist, ArtistRef, Device, PlayableItem, PlaybackState, Playlist, PlaylistItem, Queue,
-    Show, Track, TrackCount, User, UserRef, pick_image,
+    Show, Track, TrackCount, User, UserRef,
 };
 use crate::backend::{
     ApiRequest, ApiResponse, AuthStatus, Backend, Command, Event, JamRequest, LocalPlayback,
@@ -41,8 +41,6 @@ const REMOTE_FRESH: Duration = Duration::from_secs(60);
 const REMOTE_REPEAT_HOLD: Duration = Duration::from_secs(5);
 const DEVICES_FRESH: Duration = Duration::from_secs(12);
 const QUEUE_FRESH: Duration = Duration::from_secs(20);
-/// How long a cover whose download failed waits before its colour is asked
-/// for again.
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(280);
 /// How old the saved resume point may grow while music plays.
 const SESSION_REFRESH: Duration = Duration::from_secs(30);
@@ -1640,8 +1638,6 @@ impl App {
         }
     }
 
-    pub fn tint_for(&mut self, _url: Option<&str>) {}
-
     pub fn known_playlist(&self, id: &str) -> Option<&Playlist> {
         self.library
             .playlists
@@ -1818,12 +1814,6 @@ impl App {
                 }
                 Event::Local(state) => self.handle_local(*state),
                 Event::Api(response) => self.handle_api(*response),
-                Event::Accent { url, color } => {
-                    let _ = (url, color);
-                }
-                Event::AccentUnavailable { url } => {
-                    let _ = url;
-                }
                 Event::ProxyRestored { config, password } => {
                     self.handle_proxy_restored(config, password)
                 }
@@ -2643,9 +2633,6 @@ impl App {
             self.backend.api(ApiRequest::Track { id: id.clone() });
         }
         self.request_contains(vec![now.uri.clone()]);
-        if let Some(url) = now.art_small.or(now.art_url) {
-            self.tint_for(Some(&url));
-        }
         if matches!(self.page(), Page::Queue) || self.show_queue_panel {
             self.refresh_queue(true);
         }
@@ -4935,9 +4922,6 @@ impl App {
                     if let Some(listed) = self.library_entry(&id) {
                         playlist.fill_from(listed);
                     }
-                    if let Some(image) = pick_image(&playlist.images, 64) {
-                        self.tint_for(Some(image));
-                    }
                 }
                 let mut refresh_rows = false;
                 if let Some(page) = self.playlist_pages.get_mut(&id) {
@@ -5629,17 +5613,13 @@ impl App {
                 }
             }
             ApiResponse::Artist { id, result } => {
-                if let Ok(artist) = &result {
-                    if let Some(image) = pick_image(&artist.images, 64) {
-                        self.tint_for(Some(image));
-                    }
-                    if let Some(page) = self.artist_pages.get_mut(&id)
-                        && page.top_tracks.needs_load()
-                    {
-                        page.top_tracks = Loadable::Loading;
-                        self.backend
-                            .api(ApiRequest::ArtistTopTracks { id: id.clone() });
-                    }
+                if result.is_ok()
+                    && let Some(page) = self.artist_pages.get_mut(&id)
+                    && page.top_tracks.needs_load()
+                {
+                    page.top_tracks = Loadable::Loading;
+                    self.backend
+                        .api(ApiRequest::ArtistTopTracks { id: id.clone() });
                 }
                 if let Some(page) = self.artist_pages.get_mut(&id) {
                     page.artist = Loadable::from_result(result);
@@ -5680,11 +5660,6 @@ impl App {
                 let mut uris = Vec::new();
                 if let Ok(album) = &result {
                     self.request_album_types(std::iter::once(album));
-                }
-                if let Ok(album) = &result
-                    && let Some(image) = pick_image(&album.images, 64)
-                {
-                    self.tint_for(Some(image));
                 }
                 if let Some(page) = self.album_pages.get_mut(&id) {
                     match result {
@@ -5745,11 +5720,6 @@ impl App {
                 self.receive_album_queue(request, offset, result);
             }
             ApiResponse::Show { id, result } => {
-                if let Ok(show) = &result
-                    && let Some(image) = pick_image(&show.images, 64)
-                {
-                    self.tint_for(Some(image));
-                }
                 if let Some(page) = self.show_pages.get_mut(&id) {
                     match result {
                         Ok(mut show) => {

@@ -54,7 +54,7 @@ struct HomeView: View {
                                     }
                                 }
                                 SongList(
-                                    tracks: tracks.enumerated().map { var track = $1; track.position = $0; return track },
+                                    tracks: tracks.numbered(),
                                     columns: [.number, .cover, .album])
                             }
                         }
@@ -201,8 +201,8 @@ struct SearchView: View {
 
     private func numbered(_ results: SearchResults) -> SearchResults {
         var results = results
-        results.tracks = results.tracks.enumerated().map { var track = $1; track.position = $0; return track }
-        results.episodes = results.episodes.enumerated().map { var track = $1; track.position = $0; return track }
+        results.tracks = results.tracks.numbered()
+        results.episodes = results.episodes.numbered()
         return results
     }
 }
@@ -339,7 +339,7 @@ final class SongRows {
         let next = page.rowsTag.map { Key(tag: $0, count: tracks.count, filter: filter, sort: sort) }
         if let next, next == key { return (numbered, shown) }
         if next?.tag != key?.tag || next?.count != key?.count || next == nil {
-            numbered = tracks.enumerated().map { var track = $1; track.position = $0; return track }
+            numbered = tracks.numbered()
         }
         shown = sort.map { $0.apply(Self.filtered(numbered, by: filter)) } ?? Self.filtered(numbered, by: filter)
         key = next
@@ -367,7 +367,7 @@ struct ArtistView: View {
     var body: some View {
         Loader(method: "artist.get", params: ["id": id], loading: { $0.loading }) {
             (page: ArtistPage, more: @escaping () -> Void) in
-            let top = (page.topTracks ?? []).enumerated().map { var track = $1; track.position = $0; return track }
+            let top = (page.topTracks ?? []).numbered()
             PageScroll {
                 if let artist = page.artist {
                     ArtistHero(
@@ -436,7 +436,7 @@ struct ShowView: View {
     var body: some View {
         Loader(method: "show.get", params: ["id": id], loading: { $0.loading }) {
             (page: ShowPage, more: @escaping () -> Void) in
-            let episodes = (page.episodes ?? []).enumerated().map { var track = $1; track.position = $0; return track }
+            let episodes = (page.episodes ?? []).numbered()
             PageScroll {
                 if let show = page.show {
                     PageHeader(

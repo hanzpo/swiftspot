@@ -36,9 +36,13 @@ struct Track: Codable, Hashable, Identifiable, Sendable {
     /// In Liked Songs, as far as the engine knows.
     var saved: Bool?
 
-    /// A song can sit in a list twice; the row's position keeps them apart.
+    /// The row's place in the list shown.
     var position: Int = 0
-    var id: String { "\(position):\(uri)" }
+    /// Which copy of its song in the list the row is, from 0: a song can sit
+    /// in a list twice. With the URI it names the row however rows around it
+    /// move, so its selection and its view survive an edit.
+    var copy: Int = 0
+    var id: String { "\(uri)#\(copy)" }
 
     enum CodingKeys: String, CodingKey {
         case kind, uri, name, artists, album, durationMs, explicit, image, addedAt, addedBy,
@@ -63,6 +67,20 @@ struct Track: Codable, Hashable, Identifiable, Sendable {
     }
     var albumName: String { album?.name ?? "" }
     var duration: String { formatTime(ms: durationMs) }
+}
+
+extension Array where Element == Track {
+    /// The rows with their places and copies set; see `Track.copy`.
+    func numbered() -> [Track] {
+        var copies: [String: Int] = [:]
+        return enumerated().map { index, track in
+            var track = track
+            track.position = index
+            track.copy = copies[track.uri, default: 0]
+            copies[track.uri, default: 0] += 1
+            return track
+        }
+    }
 }
 
 /// Anything shown as a card in a grid or shelf.

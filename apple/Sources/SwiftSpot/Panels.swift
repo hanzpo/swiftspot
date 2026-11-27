@@ -39,7 +39,7 @@ struct QueueView: View {
             }
             if let queued = queue?.queued, !queued.isEmpty {
                 Section {
-                    ForEach(Array(queued.enumerated()), id: \.offset) { index, track in
+                    ForEach(Array(queued.numbered().enumerated()), id: \.element.id) { index, track in
                         QueueRow(track: track, playing: false)
                             .onTapGesture(count: 2) { model.playQueued(at: index, queued: true) }
                             .contextMenu {
@@ -74,7 +74,7 @@ struct QueueView: View {
             }
             if let next = queue?.next, !next.isEmpty {
                 Section(queue?.context.map { "Up Next from \($0)" } ?? "Up Next") {
-                    ForEach(Array(next.enumerated()), id: \.offset) { index, track in
+                    ForEach(Array(next.numbered().enumerated()), id: \.element.id) { index, track in
                         QueueRow(track: track, playing: false)
                             .onTapGesture(count: 2) { model.playQueued(at: index, queued: false) }
                             .contextMenu { SongMenu(tracks: [track], source: SongSource()) }

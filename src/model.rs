@@ -1025,14 +1025,10 @@ pub enum Action {
         uri: String,
         track: Box<Track>,
     },
-    /// Extracts a page's tint while its library row is hovered.
-    PrepareTint(String),
     OpenUri(String),
     /// A Spotify link from outside the app: its page opens and the window
     /// comes forward, once the account is signed in.
     OpenLink(String),
-    Back,
-    Forward,
     PlayContext {
         uri: String,
         offset_uri: Option<String>,
@@ -1053,7 +1049,6 @@ pub enum Action {
         uri: String,
         index: u32,
     },
-    ShufflePlay(String),
     TogglePlay,
     Next,
     Previous,
@@ -1096,28 +1091,10 @@ pub enum Action {
     RemoveFromQueue {
         index: usize,
     },
-    /// Insert dragged songs into "Playing next" at a position, instead of
-    /// always appending like `QueueMany`. Falls back to appending when the
-    /// local player is not the active target.
-    InsertInQueue {
-        items: Vec<PlayableItem>,
-        position: usize,
-    },
     /// Set saved state for several songs explicitly.
     SetSavedMany {
         uris: Vec<String>,
         saved: bool,
-    },
-    AddToPlaylist {
-        playlist_id: String,
-        playlist_name: String,
-        items: Vec<PlayableItem>,
-    },
-    /// Copy dragged songs into an open playlist at an absolute position.
-    InsertInPlaylist {
-        playlist_id: String,
-        position: u32,
-        items: Vec<PlayableItem>,
     },
     ConfirmAddToPlaylist {
         playlist_id: String,
@@ -1134,15 +1111,11 @@ pub enum Action {
         from: u32,
         to: u32,
     },
-    ShowDialog(Dialog),
-    CloseDialog,
     CreatePlaylist {
         name: String,
         public: bool,
         add_uris: Vec<String>,
     },
-    ChoosePlaylistCover(String),
-    UploadPlaylistCover(String),
     UpdatePlaylist {
         id: String,
         name: String,
@@ -1151,8 +1124,6 @@ pub enum Action {
     },
     DeletePlaylist(String),
     Transfer(String),
-    /// Send the account to a receiver found on the local network.
-    ActivateReceiver(Box<crate::zeroconf::Receiver>),
     RefreshDevices,
     /// Empty Next up of its queued songs, keeping the context's own.
     ClearQueue,
@@ -1161,7 +1132,6 @@ pub enum Action {
     /// Save a radio page's songs to a new playlist, by the seed's URI.
     SaveRadio(String),
     RefreshQueue,
-    CopyLink(String),
     /// Start a Jam on the device playing now.
     StartJam,
     /// End the Jam this account hosts, for everyone.
@@ -1172,81 +1142,24 @@ pub enum Action {
     RemoveFromJam(String),
     /// Join the Jam behind a join token.
     JoinJam(String),
-    /// Copy picked songs' links, one per line, and remember the songs so a
-    /// paste of the same links can show their rows at once.
-    CopySongs(Vec<PlayableItem>),
-    /// Append the Spotify song links in pasted text to an editable playlist.
-    PasteSongs {
-        playlist_id: String,
-        text: String,
-    },
-    /// Open a web page in the browser.
-    OpenUrl(String),
-    OpenInSpotify(String),
     Search(String),
     ForgetSearch(String),
-    SetSearchFilter(SearchFilter),
     FocusSearch,
     LoadMore(Page),
-    LoadWindow {
-        page: Page,
-        position: u32,
-    },
-    RetryWindow(Page),
     LoadMoreRecents,
-    ReloadRecents,
-    SetQueueTab(QueueTab),
     LoadMoreArtistAlbums(String),
-    SetDiscographyFilter {
-        artist_id: String,
-        filter: DiscographyFilter,
-    },
-    ToggleShowAllTop(String),
     Reload(Page),
     SignIn,
     CancelSignIn,
     SignOut,
     /// Add, replace, or remove the optional personal Web API app.
     ConfigurePersonalWebApp,
-    OpenPersonalAppSetup,
-    ToggleSidebar,
     ToggleQueuePanel,
-    ToggleLyricsPanel,
-    SetLyricsFullscreen(bool),
-    LyricsLineShown(Option<usize>),
-    FollowLyrics,
-    PauseLyricsFollow,
-    RetryLyrics,
-    ToggleDevicesPopup,
     SettingsChanged,
-    SetTheme(crate::settings::ThemeChoice),
-    OpenThemesFolder,
-    SetCustomTheme(String),
     ReloadThemes,
-    SetLibrarySort {
-        shelf: crate::settings::LibraryShelf,
-        sort: crate::settings::LibrarySort,
-    },
-    SetLibraryGrid(bool),
-    ToggleLibraryFolder(String),
-    ArrangeLibrary {
-        pinned: Vec<String>,
-        /// A drag outside the pin block selects this local playlist order.
-        playlist_order: Option<Vec<String>>,
-    },
     RestartEngine,
-    /// Rebuild the HTTP client with the proxy in settings. Local playback
-    /// restarts only when its HTTP proxy changed.
-    ApplyProxy,
-    ProxyEdited,
     EnablePlayback,
     ShowWindow,
-    HideWindow,
-    ClearArtCache,
-    /// Clear local play history.
-    ClearPlayHistory,
-    /// Windows: draw SwiftSpot's own title bar instead of the standard one.
-    SetCustomTitlebar(bool),
     /// Switch the equalizer's effect on the sound on or off.
     ToggleEq,
     SetEqBand(usize, f32),
@@ -1257,9 +1170,6 @@ pub enum Action {
     SetKaraoke(bool),
     /// How much of the voice karaoke leaves, from 0 to 1.
     SetVocalLevel(f32),
-    /// Close the window the way its close button does: into the tray when
-    /// that is on, out of the app otherwise.
-    CloseWindow,
     Quit,
 }
 

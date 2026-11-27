@@ -988,14 +988,6 @@ impl App {
         app
     }
 
-    /// Watches the queue control clients fill and keeps the snapshots they
-    /// read -- now playing, and the device list -- fresh.
-    pub fn set_remote_control(&mut self, guard: &crate::single_instance::Guard) {
-        self.control_commands = Some(guard.commands());
-        self.control_now_playing = Some(guard.now_playing_slot());
-        self.control_devices = Some(guard.devices_slot());
-    }
-
     /// Connects a front end to the API (src/server.rs). Its replies and
     /// events arrive on the receiver.
     #[cfg(unix)]
@@ -1188,20 +1180,6 @@ impl App {
         } else {
             Target::Remote(None)
         }
-    }
-
-    pub fn row_in_playing_list(&self, context: &RowContext) -> bool {
-        let (RowContext::Context { uri: list, .. }
-        | RowContext::View {
-            context_uri: list, ..
-        }) = context
-        else {
-            return true;
-        };
-        !list.starts_with("spotify:playlist:")
-            || self
-                .playing_context_uri()
-                .is_none_or(|playing| playing == *list)
     }
 
     /// Context shown as playing, including pending local play requests.
@@ -1604,12 +1582,6 @@ impl App {
         })
     }
 
-    /// The play request for `key` (a context or track URI) is still waiting
-    /// for Spotify to react.
-    pub fn play_pending(&self, key: &str) -> bool {
-        self.pending_fresh() && self.pending_play_keys.iter().any(|k| k == key)
-    }
-
     /// Records who is behind a user id. A lookup that found nothing never
     /// replaces a name already known: when the session connects, names
     /// still being looked up are asked for again, and the lookup that
@@ -1807,43 +1779,6 @@ impl App {
                         .get()
                         .and_then(|artists| artists.iter().find(|artist| artist.id == id))
                 })
-            })
-    }
-
-    pub fn known_show(&self, id: &str) -> Option<&Show> {
-        self.library
-            .shows
-            .items
-            .iter()
-            .find(|saved| saved.show.id == id)
-            .map(|saved| &saved.show)
-            .or_else(|| {
-                self.search
-                    .results
-                    .get()
-                    .and_then(|results| results.shows.as_ref())
-                    .and_then(|shows| shows.items.iter().find(|show| show.id == id))
-            })
-            .or_else(|| {
-                self.library
-                    .episodes
-                    .items
-                    .iter()
-                    .filter_map(|saved| saved.episode.show.as_ref())
-                    .find(|show| show.id == id)
-            })
-            .or_else(|| {
-                self.search
-                    .results
-                    .get()
-                    .and_then(|results| results.episodes.as_ref())
-                    .and_then(|episodes| {
-                        episodes
-                            .items
-                            .iter()
-                            .filter_map(|episode| episode.show.as_ref())
-                            .find(|show| show.id == id)
-                    })
             })
     }
 
@@ -2298,13 +2233,6 @@ impl App {
                 None => break,
             }
         }
-    }
-
-    pub fn table_rows_retained_bytes(&self) -> usize {
-        self.table_rows
-            .values()
-            .map(TableRowsCache::retained_bytes)
-            .sum()
     }
 
     fn handle_local(&mut self, state: LocalState) {
@@ -3078,16 +3006,6 @@ impl App {
         self.settings_dirty = true;
     }
 
-    /// Note that a setting changed, so the file is saved shortly.
-    pub fn mark_settings_dirty(&mut self) {
-        self.settings_dirty = true;
-    }
-
-    /// Note that the restorable session changed, so it is saved shortly.
-    pub fn note_session_change(&mut self) {
-        self.session_dirty = true;
-    }
-
     fn handle_proxy_restored(
         &mut self,
         config: crate::settings::ProxyConfig,
@@ -3792,10 +3710,6 @@ impl App {
         self.load_recents(false);
     }
 
-    pub fn reload_recents(&mut self) {
-        self.load_recents(true);
-    }
-
     pub fn load_more(&mut self, page: Page) {
         match page {
             Page::LikedSongs => {
@@ -3918,78 +3832,6 @@ impl App {
             }
             _ => {}
         }
-    }
-
-    fn load_window(&mut self, page: Page, position: u32) {
-        match page {
-            Page::Playlist(id) => {
-                let Some(page) = self.playlist_pages.get_mut(&id) else {
-                    return;
-                };
-                if page.pending_writes > 0
-                    || page.optimistic_snapshot.is_some()
-                    || !page.filter.trim().is_empty()
-                    || self.table_sorts.contains_key(&Page::Playlist(id.clone()))
-                {
-                    return;
-                }
-                let offset = page.items.window_at(position, PLAYLIST_PAGE_SIZE);
-                if let Some(offset) = offset {
-                    self.backend.api(ApiRequest::PlaylistItems {
-                        id,
-                        offset,
-                        generation: page.generation,
-                    });
-                }
-            }
-            Page::Album(id) => {
-                let Some(page) = self.album_pages.get_mut(&id) else {
-                    return;
-                };
-                if self.table_sorts.contains_key(&Page::Album(id.clone())) {
-                    return;
-                }
-                if let Some(offset) = page.tracks.window_at(position, 50) {
-                    self.backend.api(ApiRequest::AlbumTracks {
-                        id,
-                        offset,
-                        generation: page.generation,
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn retry_window(&mut self, page: Page) {
-        match &page {
-            Page::Playlist(id) => {
-                let Some(playlist) = self.playlist_pages.get_mut(id) else {
-                    return;
-                };
-                if playlist.pending_writes > 0 || playlist.optimistic_snapshot.is_some() {
-                    // A failed snapshot confirmation must retry that confirmation
-                    // before any replacement rows can be requested.
-                    self.reload(page);
-                    return;
-                }
-                if playlist.items.error.is_none() || !playlist.items.can_load_more() {
-                    return;
-                }
-                playlist.items.error = None;
-            }
-            Page::Album(id) => {
-                let Some(album) = self.album_pages.get_mut(id) else {
-                    return;
-                };
-                if album.tracks.error.is_none() || !album.tracks.can_load_more() {
-                    return;
-                }
-                album.tracks.error = None;
-            }
-            _ => return,
-        }
-        self.load_more(page);
     }
 
     fn load_playlist_items_at(&mut self, id: &str, offset: u32) {
@@ -6456,13 +6298,6 @@ impl App {
         self.evict_stale_pages();
     }
 
-    /// Hands the app a Spotify link from outside, a canonical URI as
-    /// [`crate::link::parse`] makes it: the window comes forward and the
-    /// page opens once the account is signed in.
-    pub fn open_link(&mut self, uri: String) {
-        self.actions.push(Action::OpenLink(uri));
-    }
-
     /// Opens the page behind the pending link once the account is signed
     /// in. A song and an episode have no page of their own here, so the
     /// album's and the podcast's open, once Spotify has said which.
@@ -6524,14 +6359,6 @@ impl App {
                 ));
             }
         }
-    }
-
-    pub fn can_go_back(&self) -> bool {
-        self.history_index > 0
-    }
-
-    pub fn can_go_forward(&self) -> bool {
-        self.history_index + 1 < self.history.len()
     }
 
     fn touch_page(&mut self, page: &Page) {
@@ -7720,8 +7547,7 @@ impl App {
             | Action::PlayContext { .. }
             | Action::PlayUris { .. }
             | Action::PlayEpisode { .. }
-            | Action::PlayFromRow { .. }
-            | Action::ShufflePlay(_) => true,
+            | Action::PlayFromRow { .. } => true,
             Action::Previous => {
                 let position = if self.resume_only() {
                     self.resume_position_ms
@@ -8478,57 +8304,6 @@ impl App {
         });
     }
 
-    /// Appends the songs linked in pasted text to an editable playlist.
-    /// Songs this app already knows add their rows at once; the rest are
-    /// asked of Spotify first, so that every row has its name.
-    fn paste_songs(&mut self, playlist_id: String, text: &str) {
-        let Some(playlist_name) = self
-            .playlist_pages
-            .get(&playlist_id)
-            .and_then(|page| page.playlist.get())
-            .filter(|playlist| self.can_edit_playlist(playlist))
-            .map(|playlist| playlist.name.clone())
-        else {
-            return;
-        };
-        let uris: Vec<String> = text
-            .split(|c: char| c.is_whitespace() || c == ',')
-            .filter_map(crate::link::parse)
-            .filter(|uri| matches!(util::uri_kind(uri), Some("track" | "episode")))
-            .collect();
-        if uris.is_empty() {
-            self.toast(gettext(
-                self.locale,
-                "The clipboard has no Spotify song links",
-            ));
-            return;
-        }
-        let mut paste = PendingPaste {
-            playlist_id,
-            playlist_name,
-            uris,
-            found: HashMap::new(),
-            missing: HashSet::new(),
-        };
-        for uri in paste.uris.clone() {
-            if paste.found.contains_key(&uri) || paste.missing.contains(&uri) {
-                continue;
-            }
-            if let Some(item) = self.known_song(&uri) {
-                paste.found.insert(uri, item);
-            } else if let Some(id) = uri.strip_prefix("spotify:track:").map(str::to_string) {
-                if self.track_requests.insert(id.clone()) {
-                    self.backend.api(ApiRequest::Track { id });
-                }
-            } else {
-                // Episodes are only added from what this app has shown.
-                paste.missing.insert(uri);
-            }
-        }
-        self.pending_pastes.push(paste);
-        self.finish_pastes();
-    }
-
     /// A song this app has already shown, by its URI.
     fn known_song(&mut self, uri: &str) -> Option<PlayableItem> {
         if let Some(item) = self.copied_songs.iter().find(|item| item.uri() == uri) {
@@ -8642,8 +8417,6 @@ impl App {
                 | Action::OpenUri(_)
                 | Action::OpenLink(_)
                 | Action::FocusSearch
-                | Action::Back
-                | Action::Forward
                 | Action::SignOut
                 | Action::ToggleQueuePanel
         ) {
@@ -8655,9 +8428,6 @@ impl App {
         match action {
             Action::Open(page) => self.open(page),
             Action::OpenSongRadio { uri, track } => self.open_song_radio(&uri, &track),
-            Action::PrepareTint(url) => {
-                let _ = url;
-            }
             Action::OpenUri(uri) => {
                 if let Some(page) = Page::from_uri(&uri) {
                     self.open(page);
@@ -8669,26 +8439,6 @@ impl App {
                 self.pending_link = Some(uri);
                 self.open_pending_link();
                 self.actions.push(Action::ShowWindow);
-            }
-            Action::Back => {
-                if self.can_go_back() {
-                    self.history_index -= 1;
-                    let page = self.page().clone();
-                    self.touch_page(&page);
-                    self.ensure_loaded(page.clone());
-                    self.retain_table_rows(&page);
-                    self.evict_stale_pages();
-                }
-            }
-            Action::Forward => {
-                if self.can_go_forward() {
-                    self.history_index += 1;
-                    let page = self.page().clone();
-                    self.touch_page(&page);
-                    self.ensure_loaded(page.clone());
-                    self.retain_table_rows(&page);
-                    self.evict_stale_pages();
-                }
             }
             Action::PlayContext {
                 uri,
@@ -8765,11 +8515,6 @@ impl App {
                     });
                 }
             },
-            Action::ShufflePlay(uri) => {
-                // The random starting song is picked in `play_request`,
-                // which every shuffled play goes through.
-                self.play_request(PlayRequest::context(uri), true);
-            }
             Action::TogglePlay => self.toggle_play(),
             Action::Next if self.resume_only() => {
                 self.step_resume(true);
@@ -8942,53 +8687,6 @@ impl App {
                 self.remove_manual_queue_row(entry);
                 self.resync_local_queue();
             }
-            Action::InsertInQueue { items, position } => {
-                if !self.queue_locally_reorderable() {
-                    let songs = items
-                        .into_iter()
-                        .map(|item| (item.uri().to_string(), item.name().to_string()))
-                        .collect();
-                    self.queue_many(songs);
-                    return;
-                }
-                let position = position.min(self.queued_rows_len());
-                let repeats: Vec<bool> = items
-                    .iter()
-                    .map(|item| self.queued_moments_ago(item.uri()))
-                    .collect();
-                let mut inserted = 0;
-                for (item, repeat) in items.into_iter().zip(repeats) {
-                    if repeat {
-                        continue;
-                    }
-                    let uri = item.uri().to_string();
-                    let at = (position + inserted).min(self.manual_queue.len());
-                    // Inserting here shifts every later manual_queue row
-                    // right by one; keep pending additions pointing at their
-                    // own song rather than the one now sitting in their slot.
-                    for addition in &mut self.pending_queue_adds {
-                        if addition.manual_index >= at {
-                            addition.manual_index += 1;
-                        }
-                    }
-                    self.pending_queue_adds.push(PendingQueueAdd {
-                        item: item.clone(),
-                        at: Instant::now(),
-                        manual_index: at,
-                        write: None,
-                    });
-                    if let Loadable::Loaded(queue) = &mut self.queue {
-                        queue.queue.insert(at.min(queue.queue.len()), item);
-                    }
-                    self.manual_queue.insert(at, uri);
-                    inserted += 1;
-                }
-                if inserted > 0 {
-                    self.session_dirty = true;
-                    self.queued_toast(inserted);
-                    self.resync_local_queue();
-                }
-            }
             Action::SetSavedMany { uris, saved } => {
                 // Unliking a song unlikes it under every release saved, as
                 // the heart for the playing song does: one left saved keeps
@@ -9027,28 +8725,6 @@ impl App {
                 };
                 for target in targets {
                     self.set_saved(target, !saved);
-                }
-            }
-            Action::AddToPlaylist {
-                playlist_id,
-                playlist_name,
-                items,
-            } => {
-                self.request_playlist_add(playlist_id, playlist_name, items, None);
-            }
-            Action::InsertInPlaylist {
-                playlist_id,
-                position,
-                items,
-            } => {
-                let name = self
-                    .playlist_pages
-                    .get(&playlist_id)
-                    .and_then(|page| page.playlist.get())
-                    .filter(|playlist| self.can_edit_playlist(playlist))
-                    .map(|playlist| playlist.name.clone());
-                if let Some(name) = name {
-                    self.request_playlist_add(playlist_id, name, items, Some(position));
                 }
             }
             Action::ConfirmAddToPlaylist {
@@ -9168,49 +8844,6 @@ impl App {
                     snapshot_id,
                 });
             }
-            Action::ChoosePlaylistCover(id) => {
-                let _ = id;
-            }
-            Action::UploadPlaylistCover(id) => {
-                if self.cover_uploads.contains_key(&id) {
-                    return;
-                }
-                let previous_urls = self.cover_urls_before_upload(&id);
-                if let Some(Dialog::EditPlaylist {
-                    id: current, cover, ..
-                }) = &mut self.dialog
-                    && *current == id
-                    && cover.uploading.is_none()
-                    && cover.request.is_none()
-                    && let Some(selected) = cover.selection.clone()
-                {
-                    self.cover_request = self.cover_request.wrapping_add(1);
-                    cover.uploading = Some(self.cover_request);
-                    self.cover_uploads.insert(id.clone(), self.cover_request);
-                    cover.error = None;
-                    self.backend.api(ApiRequest::UploadPlaylistCover {
-                        id,
-                        request: self.cover_request,
-                        previous_urls,
-                        cover: selected,
-                    });
-                }
-            }
-            Action::ShowDialog(mut dialog) => {
-                if let Dialog::EditPlaylist { id, cover, .. } = &mut dialog
-                    && let Some(request) = self.cover_uploads.get(id)
-                {
-                    cover.uploading = Some(*request);
-                }
-                self.dialog = Some(dialog);
-            }
-            Action::CloseDialog => {
-                if matches!(self.dialog, Some(Dialog::PersonalAppIntro)) {
-                    self.settings.personal_app_intro_seen = true;
-                    self.settings_dirty = true;
-                }
-                self.dialog = None;
-            }
             Action::CreatePlaylist {
                 name,
                 public,
@@ -9266,12 +8899,6 @@ impl App {
                     .api(ApiRequest::FollowPlaylist { id, follow: false });
             }
             Action::Transfer(device_id) => self.transfer(device_id),
-            Action::ActivateReceiver(receiver) => {
-                if self.activating_receiver.is_none() {
-                    self.activating_receiver = Some(receiver.name.clone());
-                    self.backend.send(Command::ActivateReceiver(receiver));
-                }
-            }
             Action::RefreshDevices => {
                 self.devices_fetched_at = None;
                 self.refresh_devices();
@@ -9292,40 +8919,6 @@ impl App {
                 self.jam_state.busy = true;
                 self.backend.send(Command::Jam(JamRequest::Join(token)));
             }
-            Action::CopyLink(uri) => {
-                if let Some(url) = util::open_spotify_url(&uri) {
-                    let _ = url;
-                    self.toast(gettext(self.locale, "Link copied"));
-                }
-            }
-            Action::CopySongs(items) => {
-                let links: Vec<String> = items
-                    .iter()
-                    .filter_map(|item| util::open_spotify_url(item.uri()))
-                    .collect();
-                if !links.is_empty() {
-                    // One link a line, in the platform's own line breaks.
-                    self.toast(match links.len() {
-                        1 => gettext(self.locale, "Link copied").into_owned(),
-                        count => ngettext(
-                            self.locale,
-                            "{count} link copied",
-                            "{count} links copied",
-                            count as u32,
-                        )
-                        .replace("{count}", &count.to_string()),
-                    });
-                    self.copied_songs = items;
-                }
-            }
-            Action::PasteSongs { playlist_id, text } => self.paste_songs(playlist_id, &text),
-            Action::OpenInSpotify(uri) => {
-                if let Some(url) = util::open_spotify_url(&uri) {
-                    std::thread::spawn(move || {
-                        let _ = crate::opener::open(&url);
-                    });
-                }
-            }
             Action::Search(query) => {
                 self.search.query = query.clone();
                 self.search.typed_at = None;
@@ -9336,7 +8929,6 @@ impl App {
                 self.settings.search_history.retain(|entry| entry != &query);
                 self.settings_dirty = true;
             }
-            Action::SetSearchFilter(filter) => self.search.filter = filter,
             Action::FocusSearch => {
                 self.search.focus_requested = true;
                 if !matches!(self.page(), Page::Search) {
@@ -9344,20 +8936,7 @@ impl App {
                 }
             }
             Action::LoadMore(page) => self.load_more(page),
-            Action::LoadWindow { page, position } => self.load_window(page, position),
-            Action::RetryWindow(page) => self.retry_window(page),
             Action::LoadMoreRecents => self.load_more_recents(),
-            Action::ReloadRecents => self.reload_recents(),
-            Action::SetQueueTab(tab) => {
-                self.queue_tab = tab;
-                self.session_dirty = true;
-                if tab == QueueTab::Recents
-                    && self.recents.items.is_empty()
-                    && !self.recents.loading
-                {
-                    self.load_recents(false);
-                }
-            }
             Action::LoadMoreArtistAlbums(id) => {
                 let Some(page) = self.artist_pages.get_mut(&id) else {
                     return;
@@ -9370,17 +8949,6 @@ impl App {
                         .api(ApiRequest::ArtistAlbums { id, groups, offset });
                 }
             }
-            Action::SetDiscographyFilter { artist_id, filter } => {
-                if let Some(page) = self.artist_pages.get_mut(&artist_id) {
-                    page.filter = filter;
-                }
-                self.load_artist_albums(&artist_id, filter);
-            }
-            Action::ToggleShowAllTop(id) => {
-                if let Some(page) = self.artist_pages.get_mut(&id) {
-                    page.show_all_top = !page.show_all_top;
-                }
-            }
             Action::Reload(page) => self.reload(page),
             Action::SignIn => {
                 // The Client ID typed on the sign-in screen is kept for the
@@ -9388,8 +8956,6 @@ impl App {
                 self.save_settings();
                 self.request_proxy(true);
             }
-            Action::ApplyProxy => self.request_proxy(false),
-            Action::ProxyEdited => self.proxy_form_edited = true,
             Action::CancelSignIn => {
                 self.backend.send(Command::CancelSignIn);
                 self.sign_in_url = None;
@@ -9401,22 +8967,10 @@ impl App {
                     self.settings.web_client_id.clone(),
                 ));
             }
-            Action::OpenPersonalAppSetup => {
-                self.settings.personal_app_intro_seen = true;
-                self.settings_dirty = true;
-                self.dialog = None;
-                self.open(Page::Settings);
-                // A saved search could be hiding the Client ID field the
-                // flow is about to focus, so drop it before landing.
-            }
             Action::SignOut => {
                 self.backend.send(Command::SignOut);
                 self.history = vec![Page::Home];
                 self.history_index = 0;
-            }
-            Action::ToggleSidebar => {
-                self.settings.sidebar_visible = !self.settings.sidebar_visible;
-                self.settings_dirty = true;
             }
             Action::ToggleQueuePanel => {
                 self.show_queue_panel = !self.show_queue_panel;
@@ -9425,127 +8979,7 @@ impl App {
                     self.refresh_queue(true);
                 }
             }
-            Action::ToggleLyricsPanel => {
-                self.leave_lyrics_fullscreen(ctx);
-                self.show_lyrics_panel = !self.show_lyrics_panel;
-                if self.show_lyrics_panel {
-                    self.show_queue_panel = false;
-                    self.lyrics_following = true;
-                    self.request_lyrics();
-                }
-            }
-            Action::SetLyricsFullscreen(fullscreen) => {
-                if fullscreen && self.lyrics_fullscreen.is_none() {
-                    let was_fullscreen = self.lyrics_fullscreen_restoring.take().unwrap_or(false);
-                    self.lyrics_fullscreen = Some(was_fullscreen);
-                    self.lyrics_fullscreen_seen = false;
-                    self.show_lyrics_panel = true;
-                    self.show_queue_panel = false;
-                    self.lyrics_following = true;
-                    self.lyrics_line_shown = None;
-                    self.request_lyrics();
-                } else if !fullscreen {
-                    self.leave_lyrics_fullscreen(ctx);
-                }
-            }
-            Action::LyricsLineShown(line) => {
-                // Escape or navigation may already have left the view earlier
-                // in this frame. The returning panel still needs to reposition.
-                if self.lyrics_fullscreen.is_some() {
-                    self.lyrics_line_shown = Some(line);
-                }
-            }
-            Action::FollowLyrics => {
-                self.lyrics_following = true;
-                self.lyrics_line_shown = None;
-            }
-            Action::PauseLyricsFollow => self.lyrics_following = false,
-            Action::RetryLyrics => {
-                self.lyrics_retries = 0;
-                self.request_lyrics();
-            }
-            Action::ToggleDevicesPopup => {
-                self.show_devices = !self.show_devices;
-                if self.show_devices {
-                    self.refresh_devices();
-                    // Receivers waiting on the network are invisible to the
-                    // Web API, so look for them ourselves.
-                    self.backend.send(Command::DiscoverReceivers);
-                }
-            }
-            Action::SetLibrarySort { shelf, sort } => {
-                if sort.supports(shelf) {
-                    self.settings.library_sort.insert(shelf, sort);
-                    match shelf {
-                        crate::settings::LibraryShelf::Albums => self.library.albums.error = None,
-                        crate::settings::LibraryShelf::Artists => self.library.artists.error = None,
-                        crate::settings::LibraryShelf::Podcasts => self.library.shows.error = None,
-                        crate::settings::LibraryShelf::Playlists => {}
-                    }
-                    self.mark_settings_dirty();
-                }
-            }
-            Action::SetLibraryGrid(grid) => {
-                self.settings.sidebar_grid = grid;
-                self.mark_settings_dirty();
-            }
-            Action::ToggleLibraryFolder(id) => {
-                if self.collapsed_folders.contains(&id) {
-                    self.collapsed_folders.retain(|held| held != &id);
-                } else {
-                    self.collapsed_folders.push(id);
-                }
-                self.session_dirty = true;
-            }
-            Action::ArrangeLibrary {
-                pinned,
-                playlist_order,
-            } => {
-                self.settings.liked_songs_pinned = pinned
-                    .iter()
-                    .any(|key| key == crate::settings::LIKED_SONGS_KEY);
-                self.settings.pinned_contexts = pinned;
-                if let Some(order) = playlist_order {
-                    // Spotify doesn't let apps change the playlist order it
-                    // keeps, so a drag in that order starts a local one.
-                    let was_spotify = self
-                        .settings
-                        .library_sort
-                        .get(&crate::settings::LibraryShelf::Playlists)
-                        .copied()
-                        .unwrap_or(crate::settings::LibrarySort::Spotify)
-                        == crate::settings::LibrarySort::Spotify;
-                    if was_spotify {
-                        self.toast(gettext(
-                            self.locale,
-                            "Spotify doesn't let apps reorder your playlists, so this order is saved on this computer",
-                        ));
-                    }
-                    self.settings.sidebar_order = order;
-                    self.settings.library_sort.insert(
-                        crate::settings::LibraryShelf::Playlists,
-                        crate::settings::LibrarySort::Local,
-                    );
-                }
-                self.settings
-                    .sidebar_order
-                    .retain(|key| !self.settings.pinned_contexts.contains(key));
-                self.mark_settings_dirty();
-            }
-            Action::SetTheme(choice) => {
-                self.settings.theme = choice;
-                self.settings.custom_theme = None;
-                self.settings.custom_theme_cache = None;
-                self.mark_settings_dirty();
-            }
-            Action::SetCustomTheme(filename) => {
-                self.settings.custom_theme = Some(filename);
-                self.mark_settings_dirty();
-            }
             Action::ReloadThemes => {}
-            Action::OpenThemesFolder => {
-                self.backend.send(Command::OpenThemesFolder);
-            }
             Action::SettingsChanged => {
                 self.settings_dirty = true;
             }
@@ -9574,52 +9008,11 @@ impl App {
                     // nothing arrives to ask a second time.
                 }
             }
-            Action::HideWindow => {}
             Action::EnablePlayback => {
                 if self.free_account() {
                     self.toast_error(gettext(self.locale, "Local playback needs Spotify Premium"));
                 } else {
                     self.enable_playback();
-                }
-            }
-            Action::OpenUrl(url) => {
-                // Open links off the UI thread with the platform-specific
-                // launcher used elsewhere in the app.
-                std::thread::spawn(move || {
-                    if let Err(error) = crate::opener::open(&url) {
-                        log::warn!("unable to open {url}: {error}");
-                    }
-                });
-            }
-            Action::ClearPlayHistory => {
-                self.plays.clear();
-                self.plays.save_with(&self.files, self.dirs.history_file());
-                self.rebuild_recents();
-                self.toast(gettext(self.locale, "Play history cleared"));
-            }
-            Action::ClearArtCache => match self.backend.art().clear_disk_cache() {
-                Ok(bytes) => {
-                    // The media controls hold a path into what was just
-                    // deleted; forget it, or the next sync hands the system
-                    // a file that is no longer there.
-                    self.media_art = None;
-                    self.toast(
-                        gettext(self.locale, "Cleared {size} MB of artwork")
-                            .replace("{size}", &format!("{:.1}", bytes as f64 / 1_048_576.0)),
-                    );
-                }
-                Err(error) => self.toast_error(
-                    gettext(self.locale, "Couldn't clear artwork: {error}")
-                        .replace("{error}", &error.to_string()),
-                ),
-            },
-            Action::SetCustomTitlebar(custom) => {
-                if self.settings.custom_titlebar != custom {
-                    self.settings.custom_titlebar = custom;
-                    self.mark_settings_dirty();
-                    // Decorations are fixed at creation. Replace only the
-                    // native window, keeping the page and playback.
-                    self.reopen_intent = true;
                 }
             }
             Action::ToggleEq => {
@@ -9671,9 +9064,6 @@ impl App {
                     .set_vocal_level(self.settings.karaoke_vocal_level);
                 self.settings_dirty = true;
             }
-            // The same request the window's own close button makes, so the
-            // close-to-tray setting decides what follows.
-            Action::CloseWindow => {}
             Action::Quit => {
                 self.quit_requested = true;
             }
@@ -9777,89 +9167,6 @@ impl App {
         });
     }
 
-    /// Selected row indices for `page`.
-    pub fn picked_rows(&self, page: &Page) -> Option<&std::collections::BTreeSet<usize>> {
-        self.selection
-            .as_ref()
-            .filter(|(owner, _, _)| owner == page)
-            .map(|(_, _, selection)| &selection.rows)
-            .filter(|rows| !rows.is_empty())
-    }
-
-    /// Clears selection when the page's rows or order change.
-    pub fn keep_picked_rows_for(&mut self, page: &Page, view: &str) {
-        let stale = self
-            .selection
-            .as_ref()
-            .is_some_and(|(owner, seen, _)| owner == page && seen != view);
-        if stale {
-            self.selection = None;
-        }
-    }
-
-    /// Applies a single, toggle, or range row selection.
-    ///
-    /// `len` bounds ranges if rows changed after the anchor was set.
-    pub fn pick_row(&mut self, page: &Page, view: &str, row: usize, pick: RowPick, len: usize) {
-        let mut selection = match self.selection.take() {
-            Some((owner, seen, selection)) if owner == *page && seen == view => selection,
-            _ => RowSelection::default(),
-        };
-        match pick {
-            RowPick::Only => {
-                // Clicking the sole selected row clears the selection.
-                let only_this = selection.rows.len() == 1 && selection.rows.contains(&row);
-                selection.rows.clear();
-                if only_this {
-                    selection.anchor = None;
-                } else {
-                    selection.rows.insert(row);
-                    selection.anchor = Some(row);
-                }
-            }
-            RowPick::Toggle => {
-                if !selection.rows.remove(&row) {
-                    selection.rows.insert(row);
-                }
-                selection.anchor = Some(row);
-            }
-            RowPick::Range => {
-                // Without an anchor, shift-click selects only this row.
-                let anchor = selection.anchor.unwrap_or(row);
-                let (from, to) = if anchor <= row {
-                    (anchor, row)
-                } else {
-                    (row, anchor)
-                };
-                selection.rows.clear();
-                selection.rows.extend((from..=to).filter(|row| *row < len));
-                selection.anchor = Some(anchor);
-            }
-        }
-        if selection.rows.is_empty() {
-            self.selection = None;
-        } else {
-            self.selection = Some((page.clone(), view.to_string(), selection));
-        }
-    }
-
-    /// Picks exactly `rows` of the page's list as it looks in `view`: every
-    /// song it shows, for Select all.
-    pub fn pick_rows(&mut self, page: &Page, view: &str, rows: std::collections::BTreeSet<usize>) {
-        let Some(&first) = rows.first() else {
-            self.selection = None;
-            return;
-        };
-        self.selection = Some((
-            page.clone(),
-            view.to_string(),
-            RowSelection {
-                rows,
-                anchor: Some(first),
-            },
-        ));
-    }
-
     /// Clears the current row selection.
     pub fn clear_picked_rows(&mut self) {
         self.selection = None;
@@ -9871,46 +9178,6 @@ impl App {
     pub fn can_edit_playlist(&self, playlist: &Playlist) -> bool {
         let owned = self.user_id().is_some_and(|user| playlist.owned_by(user));
         owned || playlist.collaborative || self.editable_by_grant.contains(&playlist.uri)
-    }
-
-    /// The playing playlist as a row context, when the now-playing track
-    /// comes from a playlist the account may edit. The player bar menu
-    /// uses this so removal matches a row's URI-based entry; moves need
-    /// a row index and stay in the playlist view.
-    pub fn editable_context_playlist(&self) -> Option<RowContext> {
-        let uri = self.playing_context_uri()?;
-        if !uri.starts_with("spotify:playlist:") {
-            return None;
-        }
-        let id = util::uri_id(&uri)?.to_string();
-        let playlist = self
-            .library_entry(&id)
-            .or_else(|| self.playlist_pages.get(&id)?.playlist.get())?;
-        if !self.can_edit_playlist(playlist) {
-            return None;
-        }
-        Some(RowContext::Context {
-            uri,
-            editable_playlist: Some((id, playlist.snapshot_id.clone())),
-        })
-    }
-
-    /// The library's playlists that take songs, as id and name pairs.
-    pub fn editable_playlists(&self) -> Vec<(String, String)> {
-        if self.user_id().is_none() {
-            return Vec::new();
-        }
-        self.library
-            .playlists
-            .get()
-            .map(|playlists| {
-                playlists
-                    .iter()
-                    .filter(|playlist| self.can_edit_playlist(playlist))
-                    .map(|playlist| (playlist.id.clone(), playlist.name.clone()))
-                    .collect()
-            })
-            .unwrap_or_default()
     }
 }
 
@@ -10834,9 +10101,7 @@ mod engine_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::models::{
-        Episode, Image, Page as ApiPage, ResumePoint, SavedEpisode, SavedTrack, SearchResults,
-    };
+    use crate::api::models::{Episode, Image, ResumePoint, SavedTrack};
 
     fn test_app(name: &str) -> App {
         let root =
@@ -13273,91 +12538,6 @@ mod tests {
         );
     }
 
-    fn picked(app: &App, page: &Page) -> Vec<usize> {
-        app.picked_rows(page)
-            .map(|rows| rows.iter().copied().collect())
-            .unwrap_or_default()
-    }
-
-    /// A plain click selects one row; clicking it again clears selection.
-    #[test]
-    fn a_plain_click_picks_one_row_and_a_second_lets_it_go() {
-        let mut app = test_app("pick-one");
-        let page = Page::LikedSongs;
-        app.pick_row(&page, "v", 3, RowPick::Only, 10);
-        assert_eq!(picked(&app, &page), vec![3]);
-        app.pick_row(&page, "v", 5, RowPick::Only, 10);
-        assert_eq!(picked(&app, &page), vec![5], "the first one is dropped");
-        app.pick_row(&page, "v", 5, RowPick::Only, 10);
-        assert!(picked(&app, &page).is_empty(), "clicking it again lets go");
-    }
-
-    /// Ctrl-click toggles one row.
-    #[test]
-    fn ctrl_click_adds_and_removes_one_row() {
-        let mut app = test_app("pick-toggle");
-        let page = Page::LikedSongs;
-        app.pick_row(&page, "v", 1, RowPick::Only, 10);
-        app.pick_row(&page, "v", 4, RowPick::Toggle, 10);
-        app.pick_row(&page, "v", 7, RowPick::Toggle, 10);
-        assert_eq!(picked(&app, &page), vec![1, 4, 7]);
-        app.pick_row(&page, "v", 4, RowPick::Toggle, 10);
-        assert_eq!(
-            picked(&app, &page),
-            vec![1, 7],
-            "the same click takes it out"
-        );
-    }
-
-    /// Shift-click selects from the anchor without exceeding the list.
-    #[test]
-    fn shift_click_takes_the_run_back_to_the_anchor() {
-        let mut app = test_app("pick-range");
-        let page = Page::LikedSongs;
-        app.pick_row(&page, "v", 2, RowPick::Only, 10);
-        app.pick_row(&page, "v", 5, RowPick::Range, 10);
-        assert_eq!(picked(&app, &page), vec![2, 3, 4, 5]);
-        // Back the other way, from the same anchor.
-        app.pick_row(&page, "v", 0, RowPick::Range, 10);
-        assert_eq!(picked(&app, &page), vec![0, 1, 2]);
-        // A list that has since shrunk cannot be reached past its end.
-        app.pick_row(&page, "v", 9, RowPick::Range, 4);
-        assert_eq!(picked(&app, &page), vec![2, 3]);
-    }
-
-    /// Shift-click without an anchor selects one row.
-    #[test]
-    fn shift_click_with_no_anchor_picks_one_row() {
-        let mut app = test_app("pick-no-anchor");
-        let page = Page::LikedSongs;
-        app.pick_row(&page, "v", 6, RowPick::Range, 10);
-        assert_eq!(picked(&app, &page), vec![6]);
-    }
-
-    /// Selection clears when sorting, filtering, or paging changes the rows.
-    #[test]
-    fn the_rows_let_go_when_the_list_moves_underneath() {
-        let mut app = test_app("pick-stale");
-        let page = Page::LikedSongs;
-        app.pick_row(&page, "by-name|", 3, RowPick::Only, 10);
-        app.keep_picked_rows_for(&page, "by-name|");
-        assert_eq!(picked(&app, &page), vec![3], "the same list keeps them");
-        app.keep_picked_rows_for(&page, "by-date|");
-        assert!(picked(&app, &page).is_empty(), "a re-sort lets them go");
-    }
-
-    /// Selecting rows in another table replaces the current selection.
-    #[test]
-    fn picking_rows_on_another_page_replaces_the_first() {
-        let mut app = test_app("pick-other-page");
-        let liked = Page::LikedSongs;
-        let album = Page::Album("a".to_string());
-        app.pick_row(&liked, "v", 1, RowPick::Only, 10);
-        app.pick_row(&album, "v", 2, RowPick::Only, 10);
-        assert_eq!(picked(&app, &album), vec![2]);
-        assert!(picked(&app, &liked).is_empty());
-    }
-
     fn search_page(id: &str) -> crate::api::models::Page<Playlist> {
         crate::api::models::Page {
             items: vec![Playlist {
@@ -14097,36 +13277,6 @@ mod tests {
             app.known_album("playlist-album").unwrap().id,
             "playlist-album"
         );
-        app.backend.shutdown();
-    }
-
-    #[test]
-    fn known_shows_include_saved_and_search_episodes() {
-        let mut app = test_app("known-episode-shows");
-        let show = |id: &str| Show {
-            id: id.to_string(),
-            ..Default::default()
-        };
-        app.library.episodes.items.push(SavedEpisode {
-            episode: Episode {
-                show: Some(show("saved-show")),
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-        app.search.results = Loadable::Loaded(SearchResults {
-            episodes: Some(ApiPage {
-                items: vec![Episode {
-                    show: Some(show("search-show")),
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }),
-            ..Default::default()
-        });
-
-        assert_eq!(app.known_show("saved-show").unwrap().id, "saved-show");
-        assert_eq!(app.known_show("search-show").unwrap().id, "search-show");
         app.backend.shutdown();
     }
 }

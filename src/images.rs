@@ -10,6 +10,10 @@ use sha1::{Digest, Sha1};
 use crate::http::Http;
 
 const MAX_ART_BYTES: usize = 8 * 1024 * 1024;
+/// The disk cache is pruned back to `ART_CACHE_KEEP` once it holds more
+/// than this, oldest use first.
+const ART_CACHE_LIMIT: u64 = 256 * 1024 * 1024;
+const ART_CACHE_KEEP: u64 = 192 * 1024 * 1024;
 
 fn is_http(uri: &str) -> bool {
     uri.starts_with("https://") || uri.starts_with("http://")
@@ -36,6 +40,14 @@ pub struct ArtLoader {
 impl ArtLoader {
     pub fn new(http: impl Into<Http>, runtime: tokio::runtime::Handle, cache_dir: PathBuf) -> Self {
         let _ = std::fs::create_dir_all(&cache_dir);
+        let dir = cache_dir.clone();
+        runtime.spawn_blocking(
+            move || match prune_cache(&dir, ART_CACHE_LIMIT, ART_CACHE_KEEP) {
+                Ok(0) => {}
+                Ok(freed) => log::info!("artwork cache pruned by {freed} bytes"),
+                Err(error) => log::warn!("unable to prune the artwork cache: {error}"),
+            },
+        );
         Self {
             inner: Arc::new(Inner {
                 entries: Mutex::new(HashMap::new()),
@@ -86,18 +98,36 @@ impl ArtLoader {
         self.inner.start_headless(waker.clone(), url.to_string());
         true
     }
+}
 
-    pub fn clear_disk_cache(&self) -> std::io::Result<u64> {
-        let mut removed = 0;
-        for entry in std::fs::read_dir(&self.inner.cache_dir)? {
-            let entry = entry?;
-            if entry.file_type()?.is_file() {
-                removed += entry.metadata().map(|m| m.len()).unwrap_or(0);
-                let _ = std::fs::remove_file(entry.path());
-            }
+/// Deletes the least recently used files in `dir` once they add up to more
+/// than `limit` bytes, until they fit in `keep`. Returns the bytes freed.
+fn prune_cache(dir: &std::path::Path, limit: u64, keep: u64) -> std::io::Result<u64> {
+    let mut files = Vec::new();
+    let mut total = 0;
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let meta = entry.metadata()?;
+        if meta.is_file() {
+            total += meta.len();
+            let used = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            files.push((used, meta.len(), entry.path()));
         }
-        Ok(removed)
     }
+    if total <= limit {
+        return Ok(0);
+    }
+    files.sort_by_key(|(used, ..)| *used);
+    let mut freed = 0;
+    for (_, len, path) in files {
+        if total - freed <= keep {
+            break;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            freed += len;
+        }
+    }
+    Ok(freed)
 }
 
 impl Inner {
@@ -125,7 +155,14 @@ impl Inner {
         let path = self.cache_path(url);
         let cached = tokio::task::spawn_blocking({
             let path = path.clone();
-            move || std::fs::read(path).ok()
+            move || {
+                let bytes = std::fs::read(&path).ok()?;
+                // Marks the file as used, so pruning keeps it longest.
+                if let Ok(file) = std::fs::File::options().write(true).open(&path) {
+                    let _ = file.set_modified(std::time::SystemTime::now());
+                }
+                Some(bytes)
+            }
         })
         .await
         .ok()
@@ -262,6 +299,27 @@ mod tests {
         })
         .await
         .expect("the background writer completes while its runtime is alive");
+    }
+
+    #[test]
+    fn pruning_drops_the_least_recently_used_covers_first() {
+        let dir = std::env::temp_dir().join(format!("swiftspot-art-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let day = Duration::from_secs(86_400);
+        let now = std::time::SystemTime::now();
+        for (name, age) in [("old", 3), ("middle", 2), ("new", 1)] {
+            let path = dir.join(name);
+            std::fs::write(&path, [0u8; 100]).unwrap();
+            let file = std::fs::File::options().write(true).open(&path).unwrap();
+            file.set_modified(now - day * age).unwrap();
+        }
+        assert_eq!(prune_cache(&dir, 300, 100).unwrap(), 0, "under the limit");
+        assert_eq!(prune_cache(&dir, 250, 150).unwrap(), 200);
+        assert!(!dir.join("old").exists());
+        assert!(!dir.join("middle").exists());
+        assert!(dir.join("new").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

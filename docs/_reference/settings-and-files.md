@@ -32,6 +32,9 @@ stand for these two folders.
 | Last run's log | `Support/swiftspot.log` | Always |
 | Crash log | `Support/panic.log` | Always |
 
+The artwork cache is kept under 256 MB: at launch, once it holds more, the
+covers used least recently go until it holds 192 MB.
+
 Clearing caches never signs you out. Sign-out from Settings covers the shared
 and personal Web API grants and the independent playback credential.
 

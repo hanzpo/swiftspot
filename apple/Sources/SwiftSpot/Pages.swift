@@ -238,13 +238,14 @@ struct SongsView: View {
                         PlayButtons(context: page.context, uris: page.stationUris)
                     }
                     if let uri = page.uri, page.owned != true, method != "library.liked" {
+                        let saved = model.isSaved(uri, page: page.saved)
                         Button {
-                            model.toggleLibrary(uri: uri)
+                            model.toggleLibrary(uri: uri, current: saved)
                         } label: {
-                            Image(systemName: page.saved == true ? "checkmark" : "plus")
+                            Image(systemName: saved ? "checkmark" : "plus")
                                 .frame(width: 20)
                         }
-                        .help(page.saved == true ? "Remove from Library" : "Add to Library")
+                        .help(saved ? "Remove from Library" : "Add to Library")
                     }
                     if let uri = page.uri {
                         Menu {
@@ -350,8 +351,9 @@ struct ArtistView: View {
                             + (artist.genres ?? []).prefix(2)
                     ) {
                         PlayButtons(context: artist.uri)
-                        Button(page.following == true ? "Following" : "Follow") {
-                            model.follow(artist: id, follow: page.following != true)
+                        let following = model.isSaved(artist.uri, page: page.following)
+                        Button(following ? "Following" : "Follow") {
+                            model.follow(artist: id, follow: !following)
                         }
                         Menu {
                             Button("Start Radio") { model.startRadio(seed: artist.uri) }
@@ -424,11 +426,12 @@ struct ShowView: View {
                             Label("Latest Episode", systemImage: "play.fill")
                         }
                         .disabled(episodes.isEmpty)
+                        let saved = model.isSaved(show.uri, page: page.saved)
                         Button {
-                            model.toggleLibrary(uri: show.uri)
+                            model.toggleLibrary(uri: show.uri, current: saved)
                         } label: {
-                            Label(page.saved == true ? "Following" : "Follow",
-                                  systemImage: page.saved == true ? "checkmark" : "plus")
+                            Label(saved ? "Following" : "Follow",
+                                  systemImage: saved ? "checkmark" : "plus")
                         }
                     }
                 }

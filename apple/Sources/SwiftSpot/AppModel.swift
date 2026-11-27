@@ -790,12 +790,19 @@ final class AppModel {
         send("playlist.delete", ["id": playlist.id], done: "Removed “\(playlist.name)”")
     }
 
-    func toggleLibrary(uri: String) {
+    func isSaved(_ uri: String, page: Bool?) -> Bool {
+        saved[uri] ?? page ?? false
+    }
+
+    /// `current` is the state the control shows, so it can turn over at once.
+    func toggleLibrary(uri: String, current: Bool? = nil) {
+        if let current { saved[uri] = !current }
         send("library.toggle", ["uri": uri])
         revision += 1
     }
 
     func follow(artist id: String, follow: Bool) {
+        saved["spotify:artist:\(id)"] = follow
         send("artist.follow", ["id": id, "follow": follow])
         revision += 1
     }

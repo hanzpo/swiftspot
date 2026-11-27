@@ -20,7 +20,6 @@ use crate::model::*;
 use crate::paths::AppDirs;
 use crate::player::{EngineConfig, LoadSpec, LocalState, Playback, PlayerCommand, RepeatMode};
 use crate::settings::{CachedRootlist, SessionState, Settings};
-use crate::single_instance::ControlCommand;
 use crate::util;
 
 type UiCtx<'a> = Option<()>;
@@ -321,13 +320,6 @@ pub struct App {
     /// The window should close and reopen at once: Windows fixes a window's
     /// decorations when it is created.
     pub reopen_intent: bool,
-    /// Commands from control clients (a second `swiftspot <verb>` launch,
-    /// a Raycast script, a link the desktop opens). Drained every frame.
-    control_commands: Option<std::sync::Arc<std::sync::Mutex<Vec<ControlCommand>>>>,
-    /// Now-playing snapshot for the control channel.
-    control_now_playing: Option<std::sync::Arc<std::sync::Mutex<String>>>,
-    /// The same, for its `devices` verb.
-    control_devices: Option<std::sync::Arc<std::sync::Mutex<String>>>,
     /// Started with `--background` for a front end: no window at first, and
     /// closing the window keeps the app running.
     pub serve_in_background: bool,
@@ -344,11 +336,6 @@ pub struct App {
     /// What the API's clients were last told.
     #[cfg(unix)]
     api_pushed: api::Pushed,
-    /// Whether that device slot still matches [`Self::devices`]. The
-    /// now-playing snapshot is rebuilt every frame because its position
-    /// moves every frame; a device list changes when Spotify answers, which
-    /// is seconds apart, so it is written when it changes instead.
-    control_devices_stale: bool,
     /// Sample data is loaded; Spotify requests are disabled.
     pub offline: bool,
     /// The interface language, always English.
@@ -781,9 +768,6 @@ impl App {
             hide_intent: false,
             wants_show: false,
             reopen_intent: false,
-            control_commands: None,
-            control_now_playing: None,
-            control_devices: None,
             serve_in_background: false,
             playlists_check: None,
             pending_playlist_details: HashMap::new(),
@@ -791,7 +775,6 @@ impl App {
             api: None,
             #[cfg(unix)]
             api_pushed: Default::default(),
-            control_devices_stale: true,
             offline: false,
             locale,
             auth: AuthStatus::Starting,
@@ -2164,7 +2147,6 @@ impl App {
         self.saved_writes.clear();
         self.queue = Loadable::NotLoaded;
         self.devices.clear();
-        self.control_devices_stale = true;
         self.devices_fetched_at = None;
         self.search.results = Loadable::NotLoaded;
         self.search.committed.clear();
@@ -3064,51 +3046,6 @@ impl App {
         saved.save_with(&self.files, self.dirs.settings_file());
     }
 
-    fn handle_control_commands(&mut self) {
-        let Some(queue) = &self.control_commands else {
-            return;
-        };
-        let commands: Vec<ControlCommand> =
-            std::mem::take(&mut *queue.lock().unwrap_or_else(|p| p.into_inner()));
-        for command in commands {
-            let playing = self.now_playing().is_some_and(|now| now.playing);
-            let action = match command {
-                ControlCommand::Show => Some(Action::ShowWindow),
-                ControlCommand::ReloadThemes => Some(Action::ReloadThemes),
-                ControlCommand::PlayPause => Some(Action::TogglePlay),
-                ControlCommand::Play => (!playing).then_some(Action::TogglePlay),
-                ControlCommand::Pause => playing.then_some(Action::TogglePlay),
-                ControlCommand::Next => Some(Action::Next),
-                ControlCommand::Previous => Some(Action::Previous),
-                ControlCommand::SeekBy(offset) => Some(Action::SeekBy(offset)),
-                ControlCommand::VolumeBy(delta) => Some(Action::VolumeBy(delta)),
-                ControlCommand::SetVolume(volume) => Some(Action::SetVolume(volume.min(100))),
-                ControlCommand::ToggleMute => Some(Action::ToggleMute),
-                ControlCommand::ToggleShuffle => Some(Action::ToggleShuffle),
-                ControlCommand::CycleRepeat => Some(Action::CycleRepeat),
-                ControlCommand::SetShuffle(shuffle) => Some(Action::SetShuffle(shuffle)),
-                ControlCommand::SetRepeat(mode) => Some(Action::SetRepeat(mode)),
-                ControlCommand::SeekTo(position) => Some(Action::Seek(position)),
-                // Nothing playing is nothing to save, so the verb is a
-                // no-op rather than an error the client has to handle.
-                ControlCommand::ToggleSaved => {
-                    self.now_playing().map(|now| Action::ToggleSaved(now.uri))
-                }
-                ControlCommand::PlayUri(uri) => Some(Action::PlayContext {
-                    uri,
-                    offset_uri: None,
-                    offset_index: None,
-                }),
-                ControlCommand::OpenLink(uri) => Some(Action::OpenLink(uri)),
-                ControlCommand::Transfer(device_id) => Some(Action::Transfer(device_id)),
-                ControlCommand::RefreshDevices => Some(Action::RefreshDevices),
-            };
-            if let Some(action) = action {
-                self.actions.push(action);
-            }
-        }
-    }
-
     fn handle_media_commands(&mut self) {
         let Some(commands) = self.media_controls.as_ref().map(MediaControls::commands) else {
             return;
@@ -3228,90 +3165,6 @@ impl App {
         if let Some(controls) = &mut self.media_controls {
             controls.update(state);
         }
-        if let Some(slot) = &self.control_now_playing {
-            let snapshot = self.control_snapshot();
-            *slot.lock().unwrap_or_else(|p| p.into_inner()) = snapshot;
-        }
-        if self.control_devices_stale
-            && let Some(slot) = self.control_devices.clone()
-        {
-            let snapshot = self.control_devices_snapshot();
-            *slot.lock().unwrap_or_else(|p| p.into_inner()) = snapshot;
-            self.control_devices_stale = false;
-        }
-    }
-
-    /// One line for the control channel's `nowplaying` verb: tab-separated
-    /// `state, title, artists, album, position_ms, duration_ms, volume,
-    /// shuffle, repeat, art_url, saved, device`, or
-    /// [`crate::single_instance::NOTHING_PLAYING`].
-    ///
-    /// The last three are what a Stream Deck key needs and a media key does
-    /// not: something to draw, whether the heart is filled, and where the
-    /// sound is coming out. They are appended rather than woven in, so a
-    /// script written against the older nine fields still reads correctly.
-    fn control_snapshot(&self) -> String {
-        let Some(now) = self.now_playing() else {
-            return crate::single_instance::NOTHING_PLAYING.to_owned();
-        };
-        let state = if now.playing { "playing" } else { "paused" };
-        // Not every track has been looked up yet; say so rather than
-        // claiming an unsaved track the client would draw as a hollow heart
-        // and then watch fill in a moment later.
-        let saved = match self.is_saved(&now.uri) {
-            Some(true) => "yes",
-            Some(false) => "no",
-            None => "unknown",
-        };
-        // Local playback is this computer, which Spotify has not named in
-        // the snapshot because it is not a remote device.
-        let device = match (&now.device_name, now.local) {
-            (Some(name), _) => name.as_str(),
-            (None, true) => self.settings.device_name.as_str(),
-            (None, false) => "",
-        };
-        // Tabs separate the fields, so a tab inside one would shift the rest.
-        // This runs every frame, and titles almost never contain one, so the
-        // usual answer borrows rather than allocating a copy per field.
-        fn clean(text: &str) -> std::borrow::Cow<'_, str> {
-            match text.contains('\t') {
-                true => std::borrow::Cow::Owned(text.replace('\t', " ")),
-                false => std::borrow::Cow::Borrowed(text),
-            }
-        }
-        format!(
-            "{state}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{saved}\t{}",
-            clean(&now.title),
-            clean(&now.subtitle),
-            clean(&now.album_name),
-            now.position_ms,
-            now.duration_ms,
-            now.volume_percent,
-            if now.shuffle { "on" } else { "off" },
-            now.repeat.api_name(),
-            clean(now.art_url.as_deref().unwrap_or_default()),
-            clean(device),
-        )
-    }
-
-    /// Last Spotify Connect device list as one JSON line.
-    ///
-    /// JSON safely carries multiple records and free-text device names.
-    fn control_devices_snapshot(&self) -> String {
-        let devices: Vec<_> = self
-            .devices
-            .iter()
-            .filter_map(|device| {
-                Some(serde_json::json!({
-                    "id": device.id.as_deref()?,
-                    "name": device.name,
-                    "kind": device.kind,
-                    "active": device.is_active,
-                }))
-            })
-            .collect();
-        serde_json::to_string(&devices)
-            .unwrap_or_else(|_| crate::single_instance::NO_DEVICES.to_owned())
     }
 
     // ---- loading ---------------------------------------------------------------
@@ -4596,7 +4449,6 @@ impl App {
                 match result {
                     Ok(devices) => {
                         self.devices = devices;
-                        self.control_devices_stale = true;
                         if let Some((name, since)) = self.pending_transfer_to.clone() {
                             let matching = self
                                 .devices
@@ -9037,7 +8889,6 @@ impl App {
     /// the caller should sleep before running again, or `None` when the
     /// engine can sleep indefinitely until woken by an external event.
     pub fn engine_step(&mut self, waker: &Waker) -> Option<Duration> {
-        self.handle_control_commands();
         #[cfg(unix)]
         self.serve_api();
         self.handle_events();

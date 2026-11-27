@@ -35,7 +35,6 @@ pub mod resample;
 pub mod server;
 pub mod session_reads;
 pub mod settings;
-pub mod single_instance;
 pub mod sink;
 pub mod util;
 pub mod words;

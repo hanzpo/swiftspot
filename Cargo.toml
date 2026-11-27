@@ -29,8 +29,6 @@ fastframe-log = { git = "https://github.com/crmne/fastframe", tag = "v0.17.1" }
 # The audio device stream: it pauses, so a paused player costs no CPU (#636),
 # follows the default output and reopens after a failure.
 fastframe-audio = { git = "https://github.com/crmne/fastframe", tag = "v0.17.1" }
-# One running copy per user: a lock and a private channel for external control.
-fastframe-instance = { git = "https://github.com/crmne/fastframe", tag = "v0.17.1" }
 # The desktop's media controls: Now Playing on macOS, MPRIS on Linux.
 fastframe-now-playing = { git = "https://github.com/crmne/fastframe", tag = "v0.17.1" }
 # webp because Spotify's CDN serves some playlist covers as WebP.

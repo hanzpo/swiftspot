@@ -1156,16 +1156,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fastframe-instance"
-version = "0.17.1"
-source = "git+https://github.com/crmne/fastframe?tag=v0.17.1#d5ae46d52f055ec8942765f64be4207c8c7c75bf"
-dependencies = [
- "directories",
- "getrandom 0.4.3",
- "log",
-]
-
-[[package]]
 name = "fastframe-log"
 version = "0.17.1"
 source = "git+https://github.com/crmne/fastframe?tag=v0.17.1#d5ae46d52f055ec8942765f64be4207c8c7c75bf"
@@ -4066,7 +4056,6 @@ dependencies = [
  "ctr",
  "directories",
  "fastframe-audio",
- "fastframe-instance",
  "fastframe-log",
  "fastframe-now-playing",
  "futures-util",

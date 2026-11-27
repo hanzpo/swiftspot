@@ -19,8 +19,9 @@ struct PlaybackClock<Content: View>: View {
 }
 
 /// Asks the server for a page until it has finished loading, waiting on
-/// server-pushed page events instead of tight socket polling, and reloads
-/// whenever the library changes underneath it.
+/// server-pushed page events instead of tight socket polling, then asks
+/// again on each later event for the page and whenever the library changes
+/// underneath it.
 struct Loader<Value: Decodable & Sendable, Content: View>: View {
     @Environment(AppModel.self) private var model
     var method: String
@@ -58,7 +59,10 @@ struct Loader<Value: Decodable & Sendable, Content: View>: View {
 
     private func poll() async {
         let waitKeys = pageEventKeys
-        for _ in 0..<120 {
+        let laterKeys = waitKeys.subtracting(["library"])
+        var tries = 0
+        while !Task.isCancelled {
+            let seen = model.pageEventCount(laterKeys)
             do {
                 var request: [String: Any] = params
                 if loadedBase == base, let page = value as? any RowPage,
@@ -74,13 +78,23 @@ struct Loader<Value: Decodable & Sendable, Content: View>: View {
                 value = next
                 loadedBase = base
                 failure = nil
-                if !loading(next) { return }
+                if !loading(next) {
+                    // Loaded: follow what the engine learns about this page
+                    // later, such as the names of the people who added songs.
+                    // A library change restarts this task on its own.
+                    tries = 0
+                    if model.pageEventCount(laterKeys) == seen {
+                        await model.waitForPage(laterKeys, timeout: .seconds(3600))
+                    }
+                    continue
+                }
             } catch {
                 if value == nil { failure = error.localizedDescription }
                 return
             }
+            tries += 1
+            if tries >= 120 { return }
             await model.waitForPage(waitKeys, timeout: .seconds(5))
-            if Task.isCancelled { return }
         }
     }
 

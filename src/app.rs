@@ -1618,6 +1618,18 @@ impl App {
             return;
         }
         if self.user_names.get(&id) != Some(&name) {
+            #[cfg(unix)]
+            {
+                let shown: Vec<String> = self
+                    .playlist_pages
+                    .iter()
+                    .filter(|(_, page)| page.contributors.contains(&id))
+                    .map(|(playlist, _)| format!("playlist:{playlist}"))
+                    .collect();
+                for page in shown {
+                    self.note_api_page(page);
+                }
+            }
             self.user_names.insert(id, name);
             self.user_names_revision = self.user_names_revision.wrapping_add(1);
         }
@@ -10671,6 +10683,54 @@ mod engine_tests {
             event["event"] == "page" && event["data"]["page"] == "devices"
         });
         assert!(saw_page, "expected a pushed page event for devices");
+
+        app.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_found_adder_name_pushes_the_playlists_that_show_it() {
+        let dir = std::env::temp_dir().join(format!("ss-un-{:08x}", rand::random::<u32>()));
+        let dirs = AppDirs {
+            config: dir.join("config"),
+            state: dir.join("state"),
+            cache: dir.join("cache"),
+        };
+        let _ = dirs.ensure();
+        let waker = Waker::default();
+        let mut app = App::new(
+            &waker,
+            dirs,
+            Settings::default(),
+            AppOptions {
+                media_controls: false,
+                restore_sign_in: false,
+                tray: false,
+            },
+        );
+        app.auth = AuthStatus::SignedOut;
+        let mut shared = crate::model::PlaylistPage::default();
+        shared.contributors.insert("kasia-id".into());
+        app.playlist_pages.insert("mix".into(), shared);
+        app.playlist_pages
+            .insert("solo".into(), crate::model::PlaylistPage::default());
+        let (_inbox, messages) = app.connect_front_end(&waker);
+        app.engine_step(&waker);
+        while messages.try_recv().is_ok() {}
+
+        app.set_user_name("kasia-id".into(), Some("Kasia".into()));
+        app.engine_step(&waker);
+
+        let pages: Vec<String> = messages
+            .try_iter()
+            .filter_map(|line| {
+                let event: serde_json::Value = serde_json::from_str(&line).unwrap();
+                (event["event"] == "page")
+                    .then(|| event["data"]["page"].as_str().unwrap().to_string())
+            })
+            .collect();
+        assert_eq!(pages, ["playlist:mix"]);
 
         app.shutdown();
         let _ = std::fs::remove_dir_all(&dir);

@@ -213,7 +213,16 @@ final class AppModel {
         }
     }
 
+    /// Page events seen so far for each key, so a loader can tell one came
+    /// while it was not waiting.
+    @ObservationIgnored private var pageEventCounts: [String: Int] = [:]
+
+    func pageEventCount(_ keys: Set<String>) -> Int {
+        keys.reduce(0) { $0 + pageEventCounts[$1, default: 0] }
+    }
+
     private func notifyPageWaiters(_ key: String) {
+        pageEventCounts[key, default: 0] += 1
         let matching = pageWaiters.values.filter { $0.keys.contains(key) }
         for waiter in matching {
             waiter.resume()

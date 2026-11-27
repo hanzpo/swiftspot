@@ -50,6 +50,8 @@ const HOME_EPISODES_PER_SHOW: u32 = 5;
 pub const PLAYLIST_PAGE_SIZE: u32 = 50;
 const RECONNECT_WINDOW: Duration = Duration::from_secs(600);
 const RECONNECT_LIMIT: usize = 6;
+/// Names of people who added songs looked up at once.
+const USER_NAME_LOOKUPS: usize = 4;
 /// The longest wait between tries to reach Spotify again after a connect
 /// failed for want of a network.
 const ENGINE_RETRY_MAX: Duration = Duration::from_secs(60);
@@ -4462,10 +4464,24 @@ impl Worker {
         let events = self.events.clone();
         let waker = self.waker.clone();
         tokio::spawn(async move {
-            for id in ids {
-                let name = session_reads::user_display_name(engine.session(), &id).await;
-                let _ = events.send(Event::UserName { id, name });
-                waker.wake();
+            let mut waiting = ids.into_iter();
+            let mut running = tokio::task::JoinSet::new();
+            loop {
+                while running.len() < USER_NAME_LOOKUPS {
+                    let Some(id) = waiting.next() else { break };
+                    let engine = engine.clone();
+                    running.spawn(async move {
+                        let name = session_reads::user_display_name(engine.session(), &id).await;
+                        (id, name)
+                    });
+                }
+                let Some(done) = running.join_next().await else {
+                    break;
+                };
+                if let Ok((id, name)) = done {
+                    let _ = events.send(Event::UserName { id, name });
+                    waker.wake();
+                }
             }
         });
     }

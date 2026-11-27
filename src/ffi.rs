@@ -85,6 +85,7 @@ impl Engine {
             std::thread::Builder::new()
                 .name("swiftspot-engine".into())
                 .spawn(move || {
+                    crate::file_writer::mark_ui_thread();
                     let mut settings = Settings::load(&dirs.settings_file());
                     if matches!(settings.device_name.as_str(), "Spotifast" | "Spotlite") {
                         settings.device_name = "SwiftSpot".to_string();

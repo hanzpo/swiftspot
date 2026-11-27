@@ -50,6 +50,26 @@ const HOME_EPISODES_PER_SHOW: u32 = 5;
 pub const PLAYLIST_PAGE_SIZE: u32 = 50;
 const RECONNECT_WINDOW: Duration = Duration::from_secs(600);
 const RECONNECT_LIMIT: usize = 6;
+/// The longest wait between tries to reach Spotify again after a connect
+/// failed for want of a network.
+const ENGINE_RETRY_MAX: Duration = Duration::from_secs(60);
+
+/// How long to wait before the `attempt`th try (from 0) to connect the
+/// engine again: 2 s, doubling up to a minute.
+fn engine_retry_delay(attempt: u32) -> Duration {
+    Duration::from_secs(2)
+        .saturating_mul(2u32.saturating_pow(attempt.min(6)))
+        .min(ENGINE_RETRY_MAX)
+}
+
+/// True for a connect failure that the network coming back can mend, so
+/// the engine tries again rather than give up.
+fn connect_failure_is_network(message: &str) -> bool {
+    message.starts_with(NETWORK_FAILURE) || message == CONNECT_TIMED_OUT
+}
+
+const NETWORK_FAILURE: &str = "Couldn't reach Spotify";
+const CONNECT_TIMED_OUT: &str = "Connecting to Spotify timed out";
 
 async fn connect_engine_with_deadline<F: std::future::Future>(
     connect: F,
@@ -882,6 +902,11 @@ pub enum Command {
     },
     /// Internal: librespot's session ended on its own.
     Reconnect,
+    /// Internal: try again to connect an engine that failed to reach
+    /// Spotify. Only the newest scheduled try (`token`) counts.
+    RetryEngine {
+        token: u64,
+    },
     /// Look for Spotify Connect receivers on the local network.
     DiscoverReceivers,
     /// Send the account to a receiver so it joins Spotify Connect.
@@ -1804,6 +1829,11 @@ struct Worker {
     authorizing_source: Option<ApiSource>,
     pending_authorization: Option<ApiSource>,
     reconnects: Vec<Instant>,
+    /// Tries made since a connect failed to reach Spotify, while another
+    /// is scheduled.
+    engine_retry: Option<u32>,
+    /// Counts scheduled tries, so one cancelled or overtaken does nothing.
+    engine_retry_token: u64,
     /// What the engine was playing when it went down, to load again once
     /// the next one is up.
     resume: Option<PlaybackResume>,
@@ -1870,6 +1900,8 @@ impl Worker {
             authorizing_source: None,
             pending_authorization: None,
             reconnects: Vec::new(),
+            engine_retry: None,
+            engine_retry_token: 0,
             resume: None,
             resume_verify: None,
             #[cfg(target_os = "macos")]
@@ -2338,6 +2370,7 @@ impl Worker {
                     self.finish_playback_authorization(attempt)
                 }
                 Command::Reconnect => self.reconnect_engine(),
+                Command::RetryEngine { token } => self.retry_engine(token),
                 Command::DiscoverReceivers => self.discover_receivers(),
                 Command::ActivateReceiver(receiver) => self.activate_receiver(*receiver),
                 Command::Lyrics(request) => self.fetch_lyrics(*request),
@@ -3100,6 +3133,7 @@ impl Worker {
             self.emit(Event::Jam(None));
         }
         self.carry_volume();
+        self.cancel_engine_retry();
         self.engine_slot.shutdown_all();
         if let Some(cancel) = self.cancel_signin.take() {
             let _ = cancel.send(true);
@@ -3465,7 +3499,7 @@ impl Worker {
                     lease: lease.clone(),
                     session_generation,
                     engine: Box::new(None),
-                    error: Some("Connecting to Spotify timed out".into()),
+                    error: Some(CONNECT_TIMED_OUT.into()),
                 },
             };
             let _ = commands.send(outcome);
@@ -3550,6 +3584,7 @@ impl Worker {
                 self.engine_slot = EngineSlot::Running(engine);
                 self.start_rootlist();
                 self.reconnects.clear();
+                self.cancel_engine_retry();
                 self.emit(Event::Playback(LocalPlayback::Ready { device_id }));
                 self.start_album_type_lookup();
                 self.start_audiobook_lookup();
@@ -3559,12 +3594,23 @@ impl Worker {
                 self.watch_jam();
             }
             None => {
+                let message = error.unwrap_or_else(|| "Local playback is unavailable".into());
+                if connect_failure_is_network(&message) {
+                    // Keep the song to pick up and the player still
+                    // draining it: the network coming back brings both on.
+                    if let Some(player) = kept {
+                        self.engine_slot.keep_player(player);
+                    }
+                    self.schedule_engine_retry();
+                    self.emit(Event::Playback(LocalPlayback::Connecting));
+                    return;
+                }
+                self.cancel_engine_retry();
                 self.resume = None;
                 if let Some(player) = kept {
                     player.stop();
                 }
                 self.stop_kept_player();
-                let message = error.unwrap_or_else(|| "Local playback is unavailable".into());
                 self.emit(Event::Playback(LocalPlayback::Failed(message)));
             }
         }
@@ -3579,6 +3625,7 @@ impl Worker {
             self.album_type_lookup.clear_engine_work();
             self.playlist_header_lookup.clear_engine_work();
             self.carry_volume();
+            self.cancel_engine_retry();
             self.engine_slot.shutdown_all();
             let credential_stored = self.playback_grant.is_some();
             if credential_stored {
@@ -3682,6 +3729,42 @@ impl Worker {
         }
         self.resume_verify = Some((spec, attempts + 1));
         self.schedule_resume_check(4_000);
+    }
+
+    fn schedule_engine_retry(&mut self) {
+        let attempt = self.engine_retry.map_or(0, |tries| tries.saturating_add(1));
+        self.engine_retry = Some(attempt);
+        self.engine_retry_token = self.engine_retry_token.wrapping_add(1);
+        let token = self.engine_retry_token;
+        let delay = engine_retry_delay(attempt);
+        log::info!("local playback could not reach Spotify; trying again in {delay:?}");
+        let commands = self.commands.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let _ = commands.send(Command::RetryEngine { token });
+        });
+    }
+
+    fn cancel_engine_retry(&mut self) {
+        self.engine_retry = None;
+        self.engine_retry_token = self.engine_retry_token.wrapping_add(1);
+    }
+
+    fn retry_engine(&mut self, token: u64) {
+        if token != self.engine_retry_token || self.engine_retry.is_none() {
+            return;
+        }
+        self.resume_engine();
+        if !self.engine_slot.is_connecting() && !self.engine_slot.is_running() {
+            // Nothing left to connect with, such as a first authorization
+            // whose grant never arrived.
+            self.cancel_engine_retry();
+            self.resume = None;
+            self.stop_kept_player();
+            self.emit(Event::Playback(LocalPlayback::Failed(
+                NETWORK_FAILURE.into(),
+            )));
+        }
     }
 
     fn schedule_resume_check(&self, delay_ms: u64) {
@@ -4510,7 +4593,7 @@ fn friendly_connect_error(error: &anyhow::Error) -> String {
     } else if lower.contains("premium") {
         PREMIUM_NEEDED.to_string()
     } else if lower.contains("dns") || lower.contains("connect") || lower.contains("resolve") {
-        format!("Couldn't reach Spotify: {text}")
+        format!("{NETWORK_FAILURE}: {text}")
     } else {
         text
     }
@@ -7999,6 +8082,58 @@ mod authorization_tests {
     }
 
     #[test]
+    fn a_connect_without_a_network_tries_again_and_keeps_the_song() {
+        let (runtime, mut worker, events) = worker("engine-retry");
+        let _entered = runtime.enter();
+        verify(&mut worker, ApiSource::Shared, "alice");
+        let generation = worker.album_type_lookup.session_generation;
+        let _ = events.try_iter().collect::<Vec<_>>();
+
+        worker.resume = Some(PlaybackResume::Track(crate::player::LoadSpec::default()));
+        worker.engine_slot.begin_connect();
+        worker.on_engine_connected(
+            generation,
+            None,
+            Some(format!("{NETWORK_FAILURE}: failed to resolve host")),
+        );
+        assert_eq!(worker.engine_retry, Some(0));
+        assert!(worker.resume.is_some(), "the song to pick up stays");
+        let shown: Vec<_> = events.try_iter().collect();
+        assert!(
+            shown
+                .iter()
+                .any(|event| matches!(event, Event::Playback(LocalPlayback::Connecting)))
+        );
+        assert!(
+            !shown
+                .iter()
+                .any(|event| matches!(event, Event::Playback(LocalPlayback::Failed(_))))
+        );
+
+        let stale = worker.engine_retry_token.wrapping_sub(1);
+        worker.retry_engine(stale);
+        assert_eq!(
+            worker.engine_retry,
+            Some(0),
+            "an overtaken try does nothing"
+        );
+
+        worker.engine_slot.begin_connect();
+        worker.on_engine_connected(
+            generation,
+            None,
+            Some("Spotify rejected the saved sign-in. Please sign in again.".into()),
+        );
+        assert_eq!(worker.engine_retry, None);
+        assert!(worker.resume.is_none());
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, Event::Playback(LocalPlayback::Failed(_))))
+        );
+    }
+
+    #[test]
     fn cancelling_the_playback_grant_leaves_authorizing() {
         let (runtime, mut worker, events) = worker("cancel-playback-grant");
         let _entered = runtime.enter();
@@ -8297,6 +8432,25 @@ mod tests {
             .unwrap();
         assert_eq!(crate::lyrics::cached(&none), None, "and gone in a week");
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn engine_retries_back_off_to_a_minute() {
+        let waits: Vec<_> = (0..8)
+            .map(|attempt| engine_retry_delay(attempt).as_secs())
+            .collect();
+        assert_eq!(waits, [2, 4, 8, 16, 32, 60, 60, 60]);
+        assert_eq!(engine_retry_delay(u32::MAX), ENGINE_RETRY_MAX);
+    }
+
+    #[test]
+    fn only_network_failures_retry_the_engine() {
+        let offline = friendly_connect_error(&anyhow::anyhow!("failed to resolve host"));
+        assert!(connect_failure_is_network(&offline));
+        assert!(connect_failure_is_network(CONNECT_TIMED_OUT));
+        let rejected = friendly_connect_error(&anyhow::anyhow!("BadCredentials"));
+        assert!(!connect_failure_is_network(&rejected));
+        assert!(!connect_failure_is_network(PREMIUM_NEEDED));
     }
 
     #[test]

@@ -318,6 +318,10 @@ uses the Web API for subsequent control requests.
 Playback runs on a separate runtime. Librespot maintains the Spotify Connect
 session, exposes this computer as a device, receives transfers, and reports
 playback state. If the session drops, it reconnects with the stored credential.
+A connect that cannot reach Spotify (no network, or a timeout) is tried again
+after 2 s, then at doubling waits up to one minute, until the network comes
+back; the song that was playing is picked up then. Other failures, such as a
+rejected sign-in, stop and say why.
 
 Since 0.9.0, selecting this computer in the device picker asks
 librespot to transfer playback from the active Connect device. Spotify supplies

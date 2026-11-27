@@ -41,6 +41,7 @@ const REMOTE_COMMAND_WINDOW: Duration = Duration::from_secs(10);
 const REMOTE_FRESH: Duration = Duration::from_secs(60);
 const REMOTE_REPEAT_HOLD: Duration = Duration::from_secs(5);
 const DEVICES_FRESH: Duration = Duration::from_secs(12);
+const QUEUE_FRESH: Duration = Duration::from_secs(20);
 /// How long a cover whose download failed waits before its colour is asked
 /// for again.
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(280);
@@ -2994,7 +2995,7 @@ impl App {
                 && !self.queue.is_loading()
                 && self
                     .queue_fetched_at
-                    .is_none_or(|at| at.elapsed() > Duration::from_secs(20))
+                    .is_none_or(|at| at.elapsed() > QUEUE_FRESH)
             {
                 self.refresh_queue(false);
             }
@@ -9934,24 +9935,72 @@ impl App {
         self.next_engine_wake(tick_wake)
     }
 
+    /// The soonest moment the engine has something of its own to do: a
+    /// poll falling due, a refresh of what the app shows, an optimistic hold
+    /// running out, or a song played long enough to count. Anything else
+    /// wakes it through the `Waker`.
     fn next_engine_wake(&self, mut wake: Option<Duration>) -> Option<Duration> {
-        let mut at_most = |delay: Duration| {
+        let now = Instant::now();
+        let mut at_most = |due: Instant| {
+            let delay = due.saturating_duration_since(now);
             wake = Some(wake.map_or(delay, |current| current.min(delay)));
         };
-        if self.any_play_pending() {
-            at_most(Duration::from_millis(120));
+        if !self.pending_play_keys.is_empty()
+            && self.queued_play.is_none()
+            && let Some(at) = self.pending_play_at
+        {
+            at_most(at + Duration::from_secs(8));
         }
-        let playing = self.now_playing().is_some_and(|now| now.playing);
-        if playing {
-            // The SwiftUI front end interpolates the seek bar locally; the
-            // engine only needs a coarse tick for listening history and media
-            // controls.
-            at_most(Duration::from_secs(1));
+        if let Some((_, at)) = self.optimistic_playing {
+            at_most(at + PLAYBACK_HOLD);
         }
-        if self.is_connected() {
-            at_most(self.connected_repaint_interval());
+        for (_, at) in [self.pending_local_position, self.pending_remote_position]
+            .into_iter()
+            .flatten()
+        {
+            at_most(at + OPTIMISTIC_HOLD);
+        }
+        if let Some(assumed) = &self.assumed_context {
+            at_most(assumed.at + ASSUMED_CONTEXT_HOLD);
+        }
+        if self.is_connected() && !self.offline {
+            if !self.remote_poll_pending {
+                at_most(self.remote_polled_at + self.remote_poll_interval().0);
+            }
+            // This pass already asked for whatever had never been fetched.
+            if self.show_devices && !self.devices_loading {
+                at_most(self.devices_fetched_at.unwrap_or(now) + DEVICES_FRESH);
+            }
+            if (self.show_queue_panel || matches!(self.page(), Page::Queue))
+                && !self.queue.is_loading()
+            {
+                at_most(self.queue_fetched_at.unwrap_or(now) + QUEUE_FRESH);
+            }
+        }
+        if self.now_playing().is_some_and(|now| now.playing) {
+            at_most(self.last_session_save + SESSION_REFRESH);
+        }
+        if let Some(left) = self.listening_left() {
+            at_most(now + left);
         }
         wake
+    }
+
+    /// How much more of the playing song must be heard before it counts as
+    /// played, while it plays and has not counted yet.
+    fn listening_left(&self) -> Option<Duration> {
+        let listening = self.listening.as_ref()?;
+        let since = listening.playing_since?;
+        if listening.recorded {
+            return None;
+        }
+        let duration_ms = self.now_playing_live()?.duration_ms;
+        let heard = listening.listened + since.elapsed();
+        Some(
+            crate::history::counts_after(duration_ms)
+                .saturating_sub(heard)
+                .max(Duration::from_millis(50)),
+        )
     }
 
     /// Records a track after enough active listening time.
@@ -9999,19 +10048,6 @@ impl App {
             .record(crate::history::played_track(&now), jiff::Timestamp::now());
         self.plays.save_with(&self.files, self.dirs.history_file());
         self.rebuild_recents();
-    }
-
-    /// How soon the window asks for another frame while signed in.
-    ///
-    /// API polling already uses 20s during local playback. This only changes
-    /// the UI deadline. While a track is playing, the 250ms progress refresh
-    /// still wins, so the saving is idle-local frames: 4s -> 20s, 80% fewer
-    /// wakeups when paused on this device.
-    fn connected_repaint_interval(&self) -> Duration {
-        match self.target() {
-            Target::Local if self.local.is_active() => REMOTE_POLL_IDLE,
-            _ => REMOTE_POLL_ACTIVE,
-        }
     }
 
     /// Persist state when a window closes (to the tray or for good).
@@ -12158,6 +12194,28 @@ mod tests {
         assert!(app.queued_play.is_none());
         assert!(app.intent_track.is_none());
         assert!(!app.any_play_pending());
+    }
+
+    /// A pending play and an optimistic hold wake the engine when they run
+    /// out, not on a fast tick.
+    #[test]
+    fn holds_wake_the_engine_when_they_run_out() {
+        let mut app = headless_app();
+        app.auth = AuthStatus::SignedOut;
+        assert_eq!(app.next_engine_wake(None), None);
+
+        app.set_play_pending(vec!["spotify:track:a".into()]);
+        let wake = app.next_engine_wake(None).expect("a pending play ends");
+        assert!(wake > Duration::from_secs(7) && wake <= Duration::from_secs(8));
+
+        app.optimistic_playing = Some((true, Instant::now()));
+        let wake = app.next_engine_wake(None).expect("the hold ends");
+        assert!(wake > PLAYBACK_HOLD - Duration::from_secs(1) && wake <= PLAYBACK_HOLD);
+
+        app.pending_local_position = Some((1_000, Instant::now()));
+        let wake = app.next_engine_wake(None).expect("the seek hold ends");
+        assert!(wake <= OPTIMISTIC_HOLD);
+        app.backend.shutdown();
     }
 
     /// A free account cannot play here, so it is still asked for a device.

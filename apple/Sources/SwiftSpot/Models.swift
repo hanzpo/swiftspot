@@ -172,12 +172,15 @@ struct SongsPage: Codable, Sendable {
     var seed: String?
     /// How many rows the answer left out because the app already had them.
     var from: Int?
+    /// A hash of all the rows, which the app sends back to keep them.
+    var rowsTag: String?
 }
 
 /// A page whose song rows the engine can send only past the ones the app
-/// already holds (`from` and `after`, see `skip_known_rows`).
+/// already holds (`from` and `rows_tag`, see `skip_known_rows`).
 protocol RowPage {
     var rows: [Track] { get }
+    var rowsTag: String? { get }
     var skipped: Int { get }
     func appended(to earlier: Self) -> Self
 }

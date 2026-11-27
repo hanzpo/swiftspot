@@ -258,31 +258,47 @@ fn param_str<'a>(params: &'a Value, name: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("missing \"{name}\""))
 }
 
-/// Leaves out the song rows a client already has. A client that holds the
-/// first `from` rows, the last of them `after`, gets only the rows past
-/// them and `"from": from`. When the list no longer starts with those rows
+/// Leaves out the song rows a client already has. Each answer with song
+/// rows carries `rows_tag`, a hash of those rows. A client that holds the
+/// first `from` rows and their `rows_tag` gets only the rows past them and
+/// `"from": from`. When the list no longer starts with exactly those rows
 /// the whole list goes, with `"from": 0`, and the client starts over.
 fn skip_known_rows(value: &mut Value, params: &Value) {
-    let (Some(from), Some(after)) = (
-        params.get("from").and_then(Value::as_u64),
-        params.get("after").and_then(Value::as_str),
-    ) else {
-        return;
-    };
     let Some(object) = value.as_object_mut() else {
         return;
     };
     let Some(Value::Array(tracks)) = object.get_mut("tracks") else {
         return;
     };
-    let from = usize::try_from(from).unwrap_or(usize::MAX);
-    let kept = from > 0
-        && from <= tracks.len()
-        && tracks[from - 1].get("uri").and_then(Value::as_str) == Some(after);
-    if kept {
-        tracks.drain(..from);
+    let from = params
+        .get("from")
+        .and_then(Value::as_u64)
+        .map(|from| usize::try_from(from).unwrap_or(usize::MAX));
+    let held = params.get("rows_tag").and_then(Value::as_str);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut known = None;
+    for (index, row) in tracks.iter().enumerate() {
+        if from == Some(index) {
+            known = Some(rows_tag(&hasher));
+        }
+        row.to_string().hash(&mut hasher);
     }
-    object.insert("from".into(), json!(if kept { from } else { 0 }));
+    if from == Some(tracks.len()) {
+        known = Some(rows_tag(&hasher));
+    }
+    let tag = rows_tag(&hasher);
+    if let Some(from) = from {
+        let kept = from > 0 && held.is_some() && known.as_deref() == held;
+        if kept {
+            tracks.drain(..from);
+        }
+        object.insert("from".into(), json!(if kept { from } else { 0 }));
+    }
+    object.insert("rows_tag".into(), json!(tag));
+}
+
+fn rows_tag(hasher: &impl Hasher) -> String {
+    format!("{:016x}", hasher.finish())
 }
 
 fn param_u64(params: &Value, name: &str) -> Result<u64, String> {
@@ -2493,26 +2509,62 @@ mod tests {
         })
     }
 
+    fn known(uris: &[&str], from: usize) -> Value {
+        let mut prefix = page(&uris[..from]);
+        skip_known_rows(&mut prefix, &json!({}));
+        json!({ "from": from, "rows_tag": prefix["rows_tag"] })
+    }
+
     #[test]
     fn a_client_gets_only_the_rows_after_the_ones_it_has() {
         let mut value = page(&["a", "b", "c", "d"]);
-        skip_known_rows(&mut value, &json!({ "from": 2, "after": "b" }));
+        skip_known_rows(&mut value, &known(&["a", "b"], 2));
         assert_eq!(value["from"], 2);
         assert_eq!(value["title"], "Mix");
         assert_eq!(value["tracks"], json!([{ "uri": "c" }, { "uri": "d" }]));
     }
 
     #[test]
+    fn the_tag_of_a_whole_list_matches_its_rows_held_in_full() {
+        let mut first = page(&["a", "b"]);
+        skip_known_rows(&mut first, &json!({}));
+        let mut again = page(&["a", "b", "c"]);
+        skip_known_rows(
+            &mut again,
+            &json!({ "from": 2, "rows_tag": first["rows_tag"] }),
+        );
+        assert_eq!(again["from"], 2);
+        assert_eq!(again["tracks"], json!([{ "uri": "c" }]));
+    }
+
+    #[test]
     fn a_list_that_changed_under_the_client_goes_whole() {
         let mut value = page(&["a", "x", "c"]);
-        skip_known_rows(&mut value, &json!({ "from": 2, "after": "b" }));
+        skip_known_rows(&mut value, &known(&["a", "b"], 2));
         assert_eq!(value["from"], 0);
         assert_eq!(value["tracks"].as_array().unwrap().len(), 3);
 
         let mut shorter = page(&["a"]);
-        skip_known_rows(&mut shorter, &json!({ "from": 2, "after": "b" }));
+        skip_known_rows(&mut shorter, &known(&["a", "b"], 2));
         assert_eq!(shorter["from"], 0);
         assert_eq!(shorter["tracks"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_reorder_that_keeps_the_last_held_row_goes_whole() {
+        let mut value = page(&["b", "a", "c", "d"]);
+        skip_known_rows(&mut value, &known(&["a", "b", "c"], 3));
+        assert_eq!(value["from"], 0);
+        assert_eq!(value["tracks"].as_array().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn a_changed_row_inside_the_held_rows_goes_whole() {
+        let mut value = json!({
+            "tracks": [{ "uri": "a", "added_by": "Sam" }, { "uri": "b" }, { "uri": "c" }],
+        });
+        skip_known_rows(&mut value, &known(&["a", "b"], 2));
+        assert_eq!(value["from"], 0);
     }
 
     #[test]
@@ -2520,6 +2572,7 @@ mod tests {
         let mut value = page(&["a", "b"]);
         skip_known_rows(&mut value, &json!({ "id": "pl" }));
         assert!(value.get("from").is_none());
+        assert!(value["rows_tag"].is_string());
         assert_eq!(value["tracks"].as_array().unwrap().len(), 2);
     }
 }

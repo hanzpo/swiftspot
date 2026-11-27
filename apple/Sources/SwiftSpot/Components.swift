@@ -31,15 +31,15 @@ struct Loader<Value: Decodable & Sendable, Content: View>: View {
     @State private var value: Value?
     @State private var failure: String?
     @State private var generation = 0
-    /// The page and revision `value` answers, so a newer load of the same
-    /// page asks only for the rows past those it has.
+    /// The page `value` answers, so a newer load of the same page, also after
+    /// a library change, asks only for the rows past those it has.
     @State private var loadedBase: String?
 
     private var base: String {
-        "\(method)|\(params.sorted { $0.key < $1.key })|\(model.revision)"
+        "\(method)|\(params.sorted { $0.key < $1.key })"
     }
 
-    private var key: String { "\(base)|\(generation)" }
+    private var key: String { "\(base)|\(model.revision)|\(generation)" }
 
     var body: some View {
         Group {
@@ -61,10 +61,10 @@ struct Loader<Value: Decodable & Sendable, Content: View>: View {
         for _ in 0..<120 {
             do {
                 var request: [String: Any] = params
-                let held = loadedBase == base ? (value as? any RowPage)?.rows : nil
-                if let held, let last = held.last {
-                    request["from"] = held.count
-                    request["after"] = last.uri
+                if loadedBase == base, let page = value as? any RowPage,
+                   !page.rows.isEmpty, let tag = page.rowsTag {
+                    request["from"] = page.rows.count
+                    request["rows_tag"] = tag
                 }
                 var next = try await model.call(method, request, as: Value.self)
                 if Task.isCancelled { return }

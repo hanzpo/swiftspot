@@ -16,7 +16,7 @@ struct SongColumns: OptionSet, Sendable {
 }
 
 /// Where a list's songs come from, for playing and editing them.
-struct SongSource {
+struct SongSource: Equatable {
     /// The Spotify context the songs play in, when they have one.
     var context: String?
     /// A playlist the account can edit, so songs can be taken out of it.
@@ -76,10 +76,12 @@ struct SongList: View {
                     striped: track.position % 2 == 1,
                     selected: selection.contains(track.id),
                     playing: model.playingUri == track.uri,
-                    paused: !model.isPlaying,
+                    paused: model.playingUri == track.uri && !model.isPlaying,
+                    liked: model.saved[track.uri] ?? track.saved ?? false,
                     source: source,
                     play: { play(track) }
                 )
+                .equatable()
                 .contentShape(Rectangle())
                 .gesture(TapGesture(count: 2).onEnded { play(track) })
                 .simultaneousGesture(TapGesture().modifiers(.command).onEnded { toggle(track) })
@@ -251,7 +253,9 @@ struct SongHeader: View {
     }
 }
 
-struct SongRow: View {
+/// Compared without its `play` action, so a row whose song, place and
+/// state are unchanged is not drawn again when the list is.
+struct SongRow: View, Equatable {
     @Environment(AppModel.self) private var model
     var track: Track
     var columns: SongColumns
@@ -259,12 +263,19 @@ struct SongRow: View {
     var selected: Bool
     var playing: Bool
     var paused: Bool
+    var liked: Bool
     var source = SongSource()
     /// Plays the row as a double click does: in its list, from here.
     var play: () -> Void = {}
 
     @State private var hovered = false
-    private var isLiked: Bool { model.saved[track.uri] ?? track.saved ?? false }
+    private var isLiked: Bool { liked }
+
+    nonisolated static func == (a: SongRow, b: SongRow) -> Bool {
+        a.track == b.track && a.columns == b.columns && a.striped == b.striped
+            && a.selected == b.selected && a.playing == b.playing && a.paused == b.paused
+            && a.liked == b.liked && a.source == b.source
+    }
 
     private var secondary: AnyShapeStyle {
         selected ? AnyShapeStyle(.white.opacity(0.85)) : AnyShapeStyle(.secondary)

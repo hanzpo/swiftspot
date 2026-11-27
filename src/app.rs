@@ -55,6 +55,19 @@ const TOAST_LIFETIME: Duration = Duration::from_millis(3200);
 /// from delayed repaints, so 33 ms drives roughly one frame per 16 ms.
 const OPTIMISTIC_HOLD: Duration = Duration::from_millis(2500);
 
+/// Where a seek the listener made `elapsed` ago has got to: on from the
+/// seek while the song plays, never past its end.
+fn held_position(position: u32, elapsed: Duration, playing: bool, duration_ms: u32) -> u32 {
+    if playing {
+        let elapsed = u32::try_from(elapsed.as_millis()).unwrap_or(u32::MAX);
+        position
+            .saturating_add(elapsed)
+            .min(duration_ms.max(position))
+    } else {
+        position
+    }
+}
+
 /// How long a newly started context remains visible while Spotify catches up.
 /// During local takeover, Spotify may briefly alternate between old and new
 /// context state.
@@ -1432,15 +1445,12 @@ impl App {
                     .or_else(|| track.art_url.clone()),
                 duration_ms: track.duration_ms,
                 position_ms: match self.pending_local_position {
-                    Some((position, at)) if at.elapsed() < OPTIMISTIC_HOLD => {
-                        if self.local.playback == Playback::Playing {
-                            let elapsed = at.elapsed().as_millis() as u32;
-                            let limit = track.duration_ms.max(position);
-                            position.saturating_add(elapsed).min(limit)
-                        } else {
-                            position
-                        }
-                    }
+                    Some((position, at)) if at.elapsed() < OPTIMISTIC_HOLD => held_position(
+                        position,
+                        at.elapsed(),
+                        self.local.playback == Playback::Playing,
+                        track.duration_ms,
+                    ),
                     _ => self.local.position_now(),
                 },
                 playing,
@@ -1477,7 +1487,9 @@ impl App {
             _ => remote.state.is_playing,
         };
         let position = match self.pending_remote_position {
-            Some((position, at)) if at.elapsed() < OPTIMISTIC_HOLD => position,
+            Some((position, at)) if at.elapsed() < OPTIMISTIC_HOLD => {
+                held_position(position, at.elapsed(), playing, item.duration_ms())
+            }
             _ => {
                 let base = remote.state.progress_ms.unwrap_or(0);
                 if remote.state.is_playing {
@@ -10566,6 +10578,15 @@ fn bare_item(uri: &str) -> PlayableItem {
 #[cfg(test)]
 mod engine_tests {
     use super::*;
+
+    #[test]
+    fn a_held_seek_moves_on_while_the_song_plays() {
+        let second = Duration::from_secs(1);
+        assert_eq!(held_position(30_000, second, true, 200_000), 31_000);
+        assert_eq!(held_position(30_000, second, false, 200_000), 30_000);
+        assert_eq!(held_position(199_500, second, true, 200_000), 200_000);
+        assert_eq!(held_position(5_000, second, true, 0), 5_000);
+    }
 
     #[test]
     fn waker_returns_immediately_when_signaled_before_or_during_wait() {

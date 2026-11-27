@@ -42,6 +42,7 @@ Jam invitation waiting for an answer, or a Jam being started changes.
 | `lyrics.get` | | `uri`, `synced`, `lines`: `time_ms`, `text`, `words`? |
 | `words.prepare` | `uri` | |
 | `queue.add` | `uri`, `name`? | |
+| `queue.watch` | `open` (the queue is shown; the engine keeps it fresh only then) | |
 | `jam.get` | | `jam` (`hosting`, `host`, `invite_url`, `can_remove`, `members`), `invite`, `busy`, `can_start` |
 | `jam.start`, `jam.end`, `jam.leave` | | |
 | `jam.remove` | `member` | |

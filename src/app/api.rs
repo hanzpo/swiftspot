@@ -947,6 +947,14 @@ impl App {
             }
 
             // ---- the queue -------------------------------------------------
+            "queue.watch" => {
+                let open = param_bool(params, "open")?;
+                if open && !self.show_queue_panel {
+                    self.actions.push(Action::RefreshQueue);
+                }
+                self.show_queue_panel = open;
+                ok()
+            }
             "queue.get" => {
                 if matches!(self.queue, Loadable::NotLoaded) {
                     self.actions.push(Action::RefreshQueue);
@@ -2565,6 +2573,22 @@ mod tests {
         });
         skip_known_rows(&mut value, &known(&["a", "b"], 2));
         assert_eq!(value["from"], 0);
+    }
+
+    #[test]
+    fn the_queue_is_kept_fresh_only_while_it_is_shown() {
+        let mut app = super::super::tests::headless_app();
+        let watch = |open| crate::server::Request {
+            client: 1,
+            id: json!(1),
+            method: "queue.watch".into(),
+            params: json!({ "open": open }),
+        };
+        app.answer(&watch(true)).unwrap();
+        assert!(app.show_queue_panel);
+        app.answer(&watch(false)).unwrap();
+        assert!(!app.show_queue_panel);
+        app.backend.shutdown();
     }
 
     #[test]

@@ -889,7 +889,7 @@ impl App {
             cover_request: 0,
             cover_uploads: HashMap::new(),
             uploaded_covers: Default::default(),
-            show_queue_panel: session.queue_open.unwrap_or(false),
+            show_queue_panel: false,
             show_lyrics_panel: false,
             lyrics_fullscreen: None,
             lyrics_fullscreen_seen: false,
@@ -7090,7 +7090,6 @@ impl App {
                         self.locale,
                         "Choose a device, or enable playback on this computer",
                     ));
-                    self.show_devices = true;
                     self.refresh_devices();
                 }
             }
@@ -9753,9 +9752,6 @@ impl App {
         self.jam_state.active = jam;
         if opened_here {
             self.show_devices = false;
-            if !self.show_queue_panel {
-                self.actions.push(Action::ToggleQueuePanel);
-            }
             self.queue_tab = QueueTab::Queue;
         }
         self.refresh_queue(true);
@@ -10826,7 +10822,7 @@ mod tests {
         )
     }
 
-    fn headless_app() -> App {
+    pub(crate) fn headless_app() -> App {
         let root =
             std::env::temp_dir().join(format!("swiftspot-volume-test-{}", std::process::id()));
         let dirs = AppDirs {
@@ -12179,7 +12175,15 @@ mod tests {
 
         assert!(!app.settings.playback_authorized);
         assert!(app.queued_play.is_none());
-        assert!(app.show_devices);
+        assert!(
+            app.toasts
+                .iter()
+                .any(|toast| toast.message.starts_with("Choose a device"))
+        );
+        assert!(
+            !app.show_devices,
+            "the app's picker asks for devices itself"
+        );
     }
 
     /// A restored repeat mode drives local playback until the engine has a

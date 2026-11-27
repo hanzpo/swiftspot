@@ -107,7 +107,14 @@ final class AppModel {
     // MARK: Panels
 
     enum Panel: String { case queue, lyrics }
-    var panel: Panel?
+    var panel: Panel? {
+        didSet {
+            // The engine keeps the queue fresh only while it is shown.
+            if (oldValue == .queue) != (panel == .queue) {
+                send("queue.watch", ["open": panel == .queue])
+            }
+        }
+    }
     var queue: QueueState?
     var jam: JamState?
     var lyrics: LyricsState?

@@ -256,6 +256,9 @@ struct PanelHeader<Accessory: View>: View {
 struct LyricsView: View {
     @Environment(AppModel.self) private var model
     @State private var following = true
+    /// The line being sung, kept by a small clock so the lines themselves
+    /// are drawn again only when it moves.
+    @State private var active: Int?
     /// In the panel the view has its own heading; the Now Playing view
     /// shows the words alone, larger.
     var header = true
@@ -271,51 +274,48 @@ struct LyricsView: View {
                 }
             }
             if let lyrics, !lyrics.lines.isEmpty, lyrics.uri == model.player.uri {
-                PlaybackClock(interval: 0.25) { now in
-                    let position = model.position(at: now)
-                    let active = lyrics.synced ? activeLine(lyrics.lines, at: position) : nil
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 18) {
-                                ForEach(Array(lyrics.lines.enumerated()), id: \.offset) { index, line in
-                                    Group {
-                                        if index == active, let words = line.words, !words.isEmpty {
-                                            SungLine(words: words)
-                                        } else {
-                                            Text(line.text.isEmpty ? "♪" : line.text)
-                                                .foregroundStyle(lineStyle(index: index, active: active, synced: lyrics.synced))
+                ActiveLineClock(lines: lyrics.synced ? lyrics.lines : [], active: $active)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 18) {
+                            ForEach(Array(lyrics.lines.enumerated()), id: \.offset) { index, line in
+                                Group {
+                                    if index == active, let words = line.words, !words.isEmpty {
+                                        SungLine(words: words)
+                                    } else {
+                                        Text(line.text.isEmpty ? "♪" : line.text)
+                                            .foregroundStyle(lineStyle(index: index, active: active, synced: lyrics.synced))
+                                    }
+                                }
+                                    .font(.system(size: size, weight: .bold))
+                                    .multilineTextAlignment(.leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .id(index)
+                                    .onTapGesture {
+                                        if let time = line.timeMs {
+                                            model.seek(ms: time)
+                                            following = true
                                         }
                                     }
-                                        .font(.system(size: size, weight: .bold))
-                                        .multilineTextAlignment(.leading)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .id(index)
-                                        .onTapGesture {
-                                            if let time = line.timeMs {
-                                                model.seek(ms: time)
-                                                following = true
-                                            }
-                                        }
-                                }
-                            }
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 40)
-                        }
-                        .onScrollPhaseChange { _, phase in
-                            if phase == .interacting { following = false }
-                        }
-                        .onChange(of: active) { _, line in
-                            guard following, let line else { return }
-                            withAnimation(.easeInOut(duration: 0.35)) {
-                                proxy.scrollTo(line, anchor: UnitPoint(x: 0.5, y: 0.35))
                             }
                         }
-                        .overlay(alignment: .bottom) {
-                            if !following, lyrics.synced {
-                                Button("Follow Along") { following = true }
-                                    .buttonStyle(.glass)
-                                    .padding()
-                            }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 40)
+                    }
+                    .onScrollPhaseChange { _, phase in
+                        if phase == .interacting { following = false }
+                    }
+                    .onChange(of: active) { _, line in
+                        guard following, let line else { return }
+                        withAnimation(.easeInOut(duration: 0.35)) {
+                            proxy.scrollTo(line, anchor: UnitPoint(x: 0.5, y: 0.35))
+                        }
+                    }
+                    .overlay(alignment: .bottom) {
+                        if !following, lyrics.synced {
+                            Button("Follow Along") { following = true }
+                                .buttonStyle(.glass)
+                                .padding()
                         }
                     }
                 }
@@ -334,10 +334,6 @@ struct LyricsView: View {
         .task(id: model.player.uri) { await model.loadLyrics() }
     }
 
-    private func activeLine(_ lines: [LyricsLine], at position: Int) -> Int? {
-        lines.lastIndex { ($0.timeMs ?? Int.max) <= position }
-    }
-
     private func lineStyle(index: Int, active: Int?, synced: Bool) -> AnyShapeStyle {
         guard synced, let active else { return AnyShapeStyle(.primary) }
         return index == active ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary)
@@ -347,6 +343,22 @@ struct LyricsView: View {
 /// The line being sung, lit letter by letter as each is sung, as Music
 /// does: what is sung is bright, what is to come dim, and the letter being
 /// sung fills from its left with a soft edge.
+/// Follows the song and reports the line being sung when it changes.
+private struct ActiveLineClock: View {
+    @Environment(AppModel.self) private var model
+    var lines: [LyricsLine]
+    @Binding var active: Int?
+
+    var body: some View {
+        PlaybackClock(interval: 0.25) { now in
+            let line = lines.lastIndex { ($0.timeMs ?? Int.max) <= model.position(at: now) }
+            Color.clear
+                .frame(width: 0, height: 0)
+                .onChange(of: line, initial: true) { _, line in active = line }
+        }
+    }
+}
+
 struct SungLine: View {
     @Environment(AppModel.self) private var model
     var words: [LyricWord]

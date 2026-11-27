@@ -174,43 +174,19 @@ pub struct Settings {
     )]
     pub system_theme_cache: Option<serde_json::Value>,
     pub home: HomeSettings,
-    /// Tint the interface with the colour of the playing album's art.
-    pub accent_from_art: bool,
     /// Last local volume, 0..=65535.
     pub volume: u16,
-    /// Whether the library sidebar is visible.
-    pub sidebar_visible: bool,
-    /// The playing album's art docked large at the sidebar's bottom.
-    pub art_expanded: bool,
-    /// Use compact single-line rows without cover art in the sidebar.
-    pub sidebar_compact: bool,
     /// Show the Library as responsive cover cards instead of rows.
     pub sidebar_grid: bool,
-    pub sidebar_width: f32,
-    pub lyrics_width: f32,
-    pub queue_width: f32,
-    /// Use compact single-line rows without cover art in track lists.
-    pub tracklist_compact: bool,
-    /// Linux: middle-click a list to autoscroll it. Off by default, because
-    /// Linux desktops usually paste the primary selection on middle click.
-    /// Windows always autoscrolls and macOS never does.
-    pub middle_click_autoscroll: bool,
     pub search_history: Vec<String>,
-    pub show_shortcut_hints: bool,
     /// An optional personal Spotify Web API application id. The shared
     /// application remains active for coverage when this is present.
     pub web_client_id: Option<String>,
-    /// Legacy reminder time, retained for older SwiftSpot versions.
-    pub personal_app_nudge_at: Option<String>,
     /// The listener has dismissed or followed the personal-app introduction.
     pub personal_app_intro_seen: bool,
     /// Local playback has been authorized at least once on this machine, so
     /// the app can resume it silently instead of prompting.
     pub playback_authorized: bool,
-    /// Closing the window hides to the tray and keeps the music playing.
-    pub keep_playing_in_background: bool,
-    /// Show the interactive Now Playing widget when hovering over the MacBook notch.
-    pub mac_notch_widget: bool,
     /// Context URIs and the local Liked Songs key, in pin order.
     pub pinned_contexts: Vec<String>,
     /// Older settings keep Liked Songs first until it is moved or unpinned.
@@ -297,25 +273,12 @@ impl Default for Settings {
             custom_theme_cache: None,
             system_theme_cache: None,
             home: HomeSettings::default(),
-            accent_from_art: true,
             volume: (u16::MAX as u32 * 70 / 100) as u16,
-            sidebar_visible: true,
-            art_expanded: false,
-            sidebar_compact: false,
             sidebar_grid: false,
-            sidebar_width: 250.0,
-            lyrics_width: 360.0,
-            queue_width: 360.0,
-            tracklist_compact: false,
-            middle_click_autoscroll: false,
             search_history: Vec::new(),
-            show_shortcut_hints: true,
             web_client_id: None,
-            personal_app_nudge_at: None,
             personal_app_intro_seen: false,
             playback_authorized: false,
-            keep_playing_in_background: true,
-            mac_notch_widget: false,
             pinned_contexts: Vec::new(),
             liked_songs_pinned: true,
             sidebar_order: Vec::new(),
@@ -775,17 +738,6 @@ mod tests {
     }
 
     #[test]
-    fn mac_notch_widget_defaults_to_false_when_absent_and_round_trips_true() {
-        let empty: Settings = serde_json::from_str("{}").unwrap();
-        assert!(!empty.mac_notch_widget);
-        let enabled: Settings = serde_json::from_str(r#"{"mac_notch_widget": true}"#).unwrap();
-        assert!(enabled.mac_notch_widget);
-        let encoded = serde_json::to_string(&enabled).unwrap();
-        let decoded: Settings = serde_json::from_str(&encoded).unwrap();
-        assert!(decoded.mac_notch_widget);
-    }
-
-    #[test]
     fn partial_home_preferences_keep_defaults_and_survive_a_settings_round_trip() {
         for (home, made_for_you, recommendations) in [
             ("{}", true, true),
@@ -832,12 +784,6 @@ mod tests {
     }
 
     #[test]
-    fn older_settings_keep_the_sidebar_visible() {
-        let settings: Settings = serde_json::from_str("{}").unwrap();
-        assert!(settings.sidebar_visible);
-    }
-
-    #[test]
     fn older_library_settings_keep_liked_songs_ahead_of_existing_pins() {
         let settings: Settings = serde_json::from_str(
             r#"{"pinned_contexts":["spotify:playlist:one"],"sidebar_order":["spotify:playlist:two"]}"#,
@@ -860,34 +806,6 @@ mod tests {
     }
 
     #[test]
-    fn hidden_sidebar_round_trips() {
-        let settings = Settings {
-            sidebar_visible: false,
-            ..Settings::default()
-        };
-        let json = serde_json::to_string(&settings).unwrap();
-        let restored: Settings = serde_json::from_str(&json).unwrap();
-        assert!(!restored.sidebar_visible);
-    }
-
-    #[test]
-    fn older_settings_default_to_standard_sidebar() {
-        let settings: Settings = serde_json::from_str("{}").unwrap();
-        assert!(!settings.sidebar_compact);
-    }
-
-    #[test]
-    fn compact_sidebar_round_trips() {
-        let settings = Settings {
-            sidebar_compact: true,
-            ..Settings::default()
-        };
-        let json = serde_json::to_string(&settings).unwrap();
-        let restored: Settings = serde_json::from_str(&json).unwrap();
-        assert!(restored.sidebar_compact);
-    }
-
-    #[test]
     fn library_grid_round_trips_and_older_settings_keep_the_list() {
         let old: Settings = serde_json::from_str("{}").unwrap();
         assert!(!old.sidebar_grid);
@@ -902,53 +820,46 @@ mod tests {
     }
 
     #[test]
-    fn older_settings_default_to_standard_tracklist() {
-        let settings: Settings = serde_json::from_str("{}").unwrap();
-        assert!(!settings.tracklist_compact);
-    }
-
-    #[test]
-    fn compact_tracklist_round_trips() {
-        let settings = Settings {
-            tracklist_compact: true,
-            ..Settings::default()
-        };
-        let json = serde_json::to_string(&settings).unwrap();
-        let restored: Settings = serde_json::from_str(&json).unwrap();
-        assert!(restored.tracklist_compact);
+    fn settings_from_the_egui_window_still_load() {
+        let settings: Settings = serde_json::from_str(
+            r#"{"accent_from_art":true,"sidebar_visible":false,"sidebar_compact":true,"sidebar_width":250.0,"tracklist_compact":true,"mac_notch_widget":true,"personal_app_nudge_at":"2026-09-03T15:00:00Z","volume":42}"#,
+        )
+        .unwrap();
+        assert_eq!(settings.volume, 42);
+        let text = serde_json::to_string(&settings).unwrap();
+        assert!(!text.contains("sidebar_compact"));
     }
 
     #[test]
     fn settings_from_before_the_player_bar_visualizer_was_removed_still_load() {
         let settings: Settings =
-            serde_json::from_str(r#"{"player_bar_vis":"waveform","tracklist_compact":true}"#)
-                .unwrap();
-        assert!(settings.tracklist_compact);
+            serde_json::from_str(r#"{"player_bar_vis":"waveform","volume":42}"#).unwrap();
+        assert_eq!(settings.volume, 42);
     }
 
     #[test]
     fn settings_from_before_the_updater_was_removed_still_load() {
         let settings: Settings = serde_json::from_str(
-            r#"{"check_for_updates":true,"download_updates_automatically":true,"tracklist_compact":true}"#,
+            r#"{"check_for_updates":true,"download_updates_automatically":true,"volume":42}"#,
         )
         .unwrap();
-        assert!(settings.tracklist_compact);
+        assert_eq!(settings.volume, 42);
     }
 
     #[test]
     fn settings_from_before_milkdrop_was_removed_still_load() {
         let settings: Settings = serde_json::from_str(
-            r#"{"milkdrop_open":true,"milkdrop_seconds":10,"milkdrop_fps":60,"milkdrop_screen_hz":120,"milkdrop_scale":1,"milkdrop_fullscreen":false,"milkdrop_size":[640.0,480.0],"tracklist_compact":true}"#,
+            r#"{"milkdrop_open":true,"milkdrop_seconds":10,"milkdrop_fps":60,"milkdrop_screen_hz":120,"milkdrop_scale":1,"milkdrop_fullscreen":false,"milkdrop_size":[640.0,480.0],"volume":42}"#,
         )
         .unwrap();
-        assert!(settings.tracklist_compact);
+        assert_eq!(settings.volume, 42);
     }
 
     #[test]
     fn settings_from_before_the_language_picker_was_removed_still_load() {
         let settings: Settings =
-            serde_json::from_str(r#"{"language":"de-DE","tracklist_compact":true}"#).unwrap();
-        assert!(settings.tracklist_compact);
+            serde_json::from_str(r#"{"language":"de-DE","volume":42}"#).unwrap();
+        assert_eq!(settings.volume, 42);
         let text = serde_json::to_string(&settings).unwrap();
         assert!(!text.contains("\"language\""));
     }
@@ -956,25 +867,12 @@ mod tests {
     #[test]
     fn settings_from_before_winamp_was_removed_still_load() {
         let settings: Settings = serde_json::from_str(
-            r#"{"skin":"Zaxon.wsz","winamp_window":true,"winamp_show_taskbar":false,"random_skin":true,"skin_scale":3,"winamp_on_top":true,"vis":"scope","playlist_open":true,"playlist_height":232,"eq_open":true,"playlist_shaded":true,"eq_shaded":true,"winamp_shaded":true,"eq_on":true,"eq_bands_db":[1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0],"tracklist_compact":true}"#,
+            r#"{"skin":"Zaxon.wsz","winamp_window":true,"winamp_show_taskbar":false,"random_skin":true,"skin_scale":3,"winamp_on_top":true,"vis":"scope","playlist_open":true,"playlist_height":232,"eq_open":true,"playlist_shaded":true,"eq_shaded":true,"winamp_shaded":true,"eq_on":true,"eq_bands_db":[1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0],"volume":42}"#,
         )
         .unwrap();
-        assert!(settings.tracklist_compact);
+        assert_eq!(settings.volume, 42);
         assert!(settings.eq_on);
         assert_eq!(settings.eq_bands_db[9], 10.0);
-    }
-
-    #[test]
-    fn middle_click_autoscroll_is_opt_in_and_round_trips() {
-        let settings: Settings = serde_json::from_str("{}").unwrap();
-        assert!(!settings.middle_click_autoscroll);
-        let settings = Settings {
-            middle_click_autoscroll: true,
-            ..Settings::default()
-        };
-        let json = serde_json::to_string(&settings).unwrap();
-        let restored: Settings = serde_json::from_str(&json).unwrap();
-        assert!(restored.middle_click_autoscroll);
     }
 
     #[test]
@@ -1213,22 +1111,16 @@ mod tests {
     }
 
     #[test]
-    fn personal_app_nudge_time_is_backward_compatible_and_round_trips() {
+    fn the_personal_app_intro_is_backward_compatible_and_round_trips() {
         let older: Settings = serde_json::from_str("{}").unwrap();
-        assert_eq!(older.personal_app_nudge_at, None);
         assert!(!older.personal_app_intro_seen);
 
         let settings = Settings {
-            personal_app_nudge_at: Some("2026-09-03T15:00:00Z".into()),
             personal_app_intro_seen: true,
             ..Settings::default()
         };
         let json = serde_json::to_string(&settings).unwrap();
         let restored: Settings = serde_json::from_str(&json).unwrap();
-        assert_eq!(
-            restored.personal_app_nudge_at,
-            settings.personal_app_nudge_at
-        );
         assert!(restored.personal_app_intro_seen);
     }
 }
@@ -1278,8 +1170,6 @@ pub struct SessionState {
     pub window_size: Option<[f32; 2]>,
     /// Last window outer position, to restore on next launch.
     pub window_pos: Option<[f32; 2]>,
-    /// Whether the queue panel was open.
-    pub queue_open: Option<bool>,
     /// Which tab the queue panel showed: `queue` or `recents`.
     pub queue_tab: Option<String>,
     /// The window mode fullscreen lyrics left, when the app closed while

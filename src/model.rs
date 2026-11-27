@@ -6,105 +6,6 @@ use std::time::Instant;
 
 use crate::api::models::*;
 
-/// One table row: the playable, when it was added, who added it.
-pub type TableItem = (PlayableItem, Option<String>, Option<String>);
-
-/// Cached track-table rows for one page.
-///
-/// Lives on the app, not in egui temp data, so it dies with page eviction,
-/// sign-out, and `reset_data`. A generation token stops a recreated page
-/// from reusing a stale copy that still has the old revision number.
-pub struct TableRowsCache {
-    pub generation: u64,
-    pub items_revision: u64,
-    pub user_names_revision: u64,
-    pub items: Arc<Vec<TableItem>>,
-    /// Playlist rows retain their server slots, including gaps for unavailable items.
-    pub playlist_positions: Option<Arc<Vec<usize>>>,
-    pub playlist_raw_count: usize,
-    pub playlist_duration_ms: u64,
-    pub playlist_owner: Option<(Option<String>, String)>,
-    /// Set only when the next revision extends this cached playlist prefix.
-    pub playlist_append_revision: Option<u64>,
-}
-
-impl TableRowsCache {
-    /// Retained heap for this cache: nested track/episode metadata, not just
-    /// the top-level URI and title.
-    pub fn retained_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-            + self.items.capacity() * std::mem::size_of::<TableItem>()
-            + self.playlist_positions.as_ref().map_or(0, |positions| {
-                positions.capacity() * std::mem::size_of::<usize>()
-            })
-            + self.playlist_owner.as_ref().map_or(0, |(id, name)| {
-                id.as_ref().map_or(0, String::len) + name.len()
-            })
-            + self
-                .items
-                .iter()
-                .map(|(item, added, by)| {
-                    playable_retained_bytes(item)
-                        + added.as_ref().map(String::len).unwrap_or(0)
-                        + by.as_ref().map(String::len).unwrap_or(0)
-                })
-                .sum::<usize>()
-    }
-}
-
-fn playable_retained_bytes(item: &PlayableItem) -> usize {
-    match item {
-        PlayableItem::Track(track) => track_retained_bytes(track),
-        PlayableItem::Episode(episode) => episode_retained_bytes(episode),
-    }
-}
-
-fn artist_ref_retained_bytes(artist: &ArtistRef) -> usize {
-    artist.name.len()
-        + artist.id.as_ref().map(String::len).unwrap_or(0)
-        + artist.uri.as_ref().map(String::len).unwrap_or(0)
-}
-
-fn image_retained_bytes(images: &[Image]) -> usize {
-    images.iter().map(|image| image.url.len()).sum()
-}
-
-fn album_retained_bytes(album: &Album) -> usize {
-    album.id.len()
-        + album.name.len()
-        + album.uri.len()
-        + album.album_type.as_ref().map(String::len).unwrap_or(0)
-        + album.release_date.as_ref().map(String::len).unwrap_or(0)
-        + image_retained_bytes(&album.images)
-        + album
-            .artists
-            .iter()
-            .map(artist_ref_retained_bytes)
-            .sum::<usize>()
-}
-
-fn track_retained_bytes(track: &Track) -> usize {
-    std::mem::size_of::<Track>()
-        + track.name.len()
-        + track.uri.len()
-        + track.id.as_ref().map(String::len).unwrap_or(0)
-        + track
-            .artists
-            .iter()
-            .map(artist_ref_retained_bytes)
-            .sum::<usize>()
-        + track.album.as_ref().map(album_retained_bytes).unwrap_or(0)
-}
-
-fn episode_retained_bytes(episode: &Episode) -> usize {
-    std::mem::size_of::<Episode>()
-        + episode.id.len()
-        + episode.name.len()
-        + episode.uri.len()
-        + episode.description.len()
-        + image_retained_bytes(&episode.images)
-}
-
 /// Every screen the central panel can show.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Page {
@@ -538,28 +439,6 @@ impl<T> PagedList<T> {
 
 type Page_<T> = crate::api::models::Page<T>;
 
-/// Selected track-table rows for batch actions.
-///
-/// Selection belongs to one page and clears when sorting, filtering, or paging
-/// changes the row order.
-#[derive(Clone, Debug, Default)]
-pub struct RowSelection {
-    pub rows: std::collections::BTreeSet<usize>,
-    /// Row used as the anchor for shift-click ranges.
-    pub anchor: Option<usize>,
-}
-
-/// Selection behavior for a row click.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RowPick {
-    /// Select only this row.
-    Only,
-    /// Toggle this row.
-    Toggle,
-    /// Everything from the anchor to here.
-    Range,
-}
-
 /// A cursor-paginated list (followed artists).
 #[derive(Clone, Debug)]
 pub struct CursorList<T> {
@@ -694,43 +573,6 @@ pub struct HomeData {
 
 pub const DISCOVER_TERMS: &[&str] = &["Discover Weekly", "Release Radar", "Daily Mix", "daylist"];
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SearchFilter {
-    #[default]
-    All,
-    Songs,
-    Artists,
-    Albums,
-    Playlists,
-    Podcasts,
-    Episodes,
-}
-
-impl SearchFilter {
-    pub const ALL: [SearchFilter; 7] = [
-        Self::All,
-        Self::Songs,
-        Self::Artists,
-        Self::Albums,
-        Self::Playlists,
-        Self::Podcasts,
-        Self::Episodes,
-    ];
-
-    pub fn label(self, locale: crate::i18n::Locale) -> std::borrow::Cow<'static, str> {
-        use crate::i18n::{gettext, pgettext};
-        match self {
-            Self::All => pgettext(locale, "filter", "All"),
-            Self::Songs => gettext(locale, "Songs"),
-            Self::Artists => gettext(locale, "Artists"),
-            Self::Albums => gettext(locale, "Albums"),
-            Self::Playlists => gettext(locale, "Playlists"),
-            Self::Podcasts => gettext(locale, "Podcasts"),
-            Self::Episodes => gettext(locale, "Episodes"),
-        }
-    }
-}
-
 #[derive(Default)]
 pub struct SearchState {
     pub query: String,
@@ -742,7 +584,6 @@ pub struct SearchState {
     pub catalogue_pending: bool,
     pub playlists_pending: bool,
     pub error: Option<String>,
-    pub filter: SearchFilter,
     pub typed_at: Option<Instant>,
     pub focus_requested: bool,
 }
@@ -860,7 +701,6 @@ pub struct ArtistPage {
     pub albums: HashMap<String, PagedList<Album>>,
     pub related: Loadable<Vec<Artist>>,
     pub filter: DiscographyFilter,
-    pub show_all_top: bool,
 }
 
 /// A radio page: the songs Spotify mixed for its seed, which are the songs
@@ -932,37 +772,12 @@ pub enum RowContext {
     },
 }
 
-/// Track data held during a drag.
-#[derive(Clone, Debug)]
-pub struct DragTrack {
-    pub title: String,
-    /// Cover art for the drag preview.
-    pub image: Option<String>,
-    /// Full row data, so dropping can update an open playlist immediately.
-    /// A picked table row carries the whole selection in table order.
-    pub items: Vec<PlayableItem>,
-    /// Source playlist ID and row index for moves within an editable playlist.
-    pub from: Option<(String, u32)>,
-    /// The editable playlist the rows were dragged from, however many there
-    /// are. Several rows have no `from`, and dropping them back into their
-    /// own playlist must not add copies of them (#669).
-    pub source_playlist: Option<String>,
-}
-
 /// Where the playing songs come from, as the queue's header names it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlayingFrom {
     pub name: String,
     /// The page that opens on click, when there is one.
     pub page: Option<Page>,
-}
-
-/// Sidebar entry held during a drag.
-#[derive(Clone, Debug)]
-pub struct DragEntry {
-    pub uri: String,
-    pub title: String,
-    pub image: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -972,20 +787,6 @@ pub enum Dialog {
         public: bool,
         add_uris: Vec<String>,
     },
-    EditPlaylist {
-        cover: crate::playlist_cover::Draft,
-        id: String,
-        name: String,
-        description: String,
-        /// `None` while nothing has said whether the playlist is public;
-        /// left untouched on save unless the switch is used.
-        public: Option<bool>,
-    },
-    ConfirmDeletePlaylist {
-        id: String,
-        name: String,
-        owned: bool,
-    },
     ConfirmPlaylistDuplicates {
         playlist_id: String,
         playlist_name: String,
@@ -993,13 +794,8 @@ pub enum Dialog {
         position: Option<u32>,
         duplicate_uris: Vec<String>,
     },
-    Shortcuts,
     /// The signed-in account is not Premium, so nothing will play.
     PremiumNeeded,
-    /// Introduce personal Spotify apps to eligible listeners once.
-    PersonalAppIntro,
-    /// Ask before joining the Jam an opened invitation leads to.
-    JoinJam(crate::jam::Invite),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1018,14 +814,6 @@ pub struct Toast {
 /// Actions emitted while drawing and applied afterward to avoid borrow conflicts.
 #[derive(Clone, Debug)]
 pub enum Action {
-    Open(Page),
-    /// Opens the radio of a song shown in a list, after caching the row's
-    /// song so the page has its name and cover (#644).
-    OpenSongRadio {
-        uri: String,
-        track: Box<Track>,
-    },
-    OpenUri(String),
     /// A Spotify link from outside the app: its page opens and the window
     /// comes forward, once the account is signed in.
     OpenLink(String),
@@ -1154,7 +942,6 @@ pub enum Action {
     SignOut,
     /// Add, replace, or remove the optional personal Web API app.
     ConfigurePersonalWebApp,
-    ToggleQueuePanel,
     SettingsChanged,
     ReloadThemes,
     RestartEngine,

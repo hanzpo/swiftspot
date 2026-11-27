@@ -445,8 +445,6 @@ pub struct App {
     playlist_headers_requested: HashSet<String>,
     /// Album URIs positively identified as EPs by librespot.
     confirmed_ep_albums: HashSet<String>,
-    /// Built table rows, keyed by page. Capped; dropped on reset and eviction.
-    pub table_rows: HashMap<Page, TableRowsCache>,
     page_used: HashMap<Page, Instant>,
     track_used: HashMap<String, Instant>,
 
@@ -590,7 +588,6 @@ pub struct App {
     /// One table at a time: picking rows on another page replaces it.
     /// The page it belongs to, what that page's list looked like when the
     /// rows were picked, and the rows.
-    pub selection: Option<(Page, String, RowSelection)>,
     pub table_sorts: HashMap<Page, TableSort>,
     /// User ids resolved to display names; `None` while unknown, so an id
     /// is asked about only once per run.
@@ -873,7 +870,6 @@ impl App {
             playlist_headers: HashMap::new(),
             playlist_headers_requested: HashSet::new(),
             confirmed_ep_albums: HashSet::new(),
-            table_rows: HashMap::new(),
             page_used: HashMap::new(),
             track_used: HashMap::new(),
             history: vec![first_page],
@@ -947,7 +943,6 @@ impl App {
             queue_start_pending: None,
             playlist_busy: false,
             quit_requested: false,
-            selection: None,
             table_sorts: session
                 .sorts
                 .iter()
@@ -1807,13 +1802,6 @@ impl App {
                 } => {
                     self.cover_checked(&id, request, images, result);
                 }
-                Event::PlaylistCoverChosen {
-                    id,
-                    request,
-                    result,
-                } => {
-                    self.cover_chosen(&id, request, result);
-                }
                 Event::Auth(status) => self.handle_auth(status),
                 Event::Playback(status) => self.handle_playback(status),
                 Event::Jam(jam) => self.receive_jam(jam),
@@ -2035,9 +2023,6 @@ impl App {
             AuthStatus::WaitingForBrowser { url } => self.sign_in_url = Some(url.clone()),
             AuthStatus::SignedOut => {
                 self.drop_queued_play();
-                if matches!(self.dialog, Some(Dialog::PersonalAppIntro)) {
-                    self.dialog = None;
-                }
                 self.uploaded_covers.clear();
                 self.sign_in_url = None;
                 self.web_app = None;
@@ -2188,51 +2173,10 @@ impl App {
         self.search.catalogue_pending = false;
         self.search.playlists_pending = false;
         self.search.error = None;
-        self.table_rows.clear();
         self.page_used.clear();
         self.track_used.clear();
         self.copied_songs.clear();
         self.pending_pastes.clear();
-    }
-
-    /// Drop table-row caches whose pages are gone, and cap what remains.
-    pub fn retain_table_rows(&mut self, current: &Page) {
-        const MAX_TABLE_ROW_CACHES: usize = 2;
-        self.table_rows.retain(|page, _| {
-            page == current
-                || match page {
-                    Page::Playlist(id) => self.playlist_pages.contains_key(id),
-                    Page::Album(id) => self.album_pages.contains_key(id),
-                    Page::LikedSongs | Page::TopSongs => true,
-                    _ => false,
-                }
-        });
-        if self.table_rows.len() <= MAX_TABLE_ROW_CACHES {
-            return;
-        }
-        let mut keep = HashSet::from([current.clone()]);
-        if let Some(page) = self.history.get(self.history_index) {
-            keep.insert(page.clone());
-        }
-        if self.history_index > 0
-            && let Some(page) = self.history.get(self.history_index - 1)
-        {
-            keep.insert(page.clone());
-        }
-        self.table_rows.retain(|page, _| keep.contains(page));
-        while self.table_rows.len() > MAX_TABLE_ROW_CACHES {
-            let drop = self
-                .table_rows
-                .keys()
-                .find(|page| *page != current)
-                .cloned();
-            match drop {
-                Some(page) => {
-                    self.table_rows.remove(&page);
-                }
-                None => break,
-            }
-        }
     }
 
     fn handle_local(&mut self, state: LocalState) {
@@ -3856,7 +3800,6 @@ impl App {
             page.refresh_after_write = false;
             page.generation
         };
-        self.clear_picked_rows();
         self.backend.api(ApiRequest::PlaylistItems {
             id: id.to_string(),
             offset,
@@ -4431,30 +4374,6 @@ impl App {
     }
 
     // ---- api responses -------------------------------------------------------
-
-    fn cover_chosen(
-        &mut self,
-        id: &str,
-        request: u64,
-        result: Result<Option<crate::playlist_cover::Cover>, String>,
-    ) {
-        if let Some(Dialog::EditPlaylist {
-            id: current, cover, ..
-        }) = &mut self.dialog
-            && current == id
-            && cover.request == Some(request)
-        {
-            cover.request = None;
-            match result {
-                Ok(Some(selected)) => {
-                    cover.selection = Some(selected);
-                    cover.error = None;
-                }
-                Ok(None) => {}
-                Err(error) => cover.error = Some(error),
-            }
-        }
-    }
 
     /// The cover URLs a playlist shows before an upload, to tell its new
     /// picture from the old one once Spotify answers.
@@ -5224,7 +5143,6 @@ impl App {
                 let mut uris = Vec::new();
                 let mut adders: Vec<String> = Vec::new();
                 let mut tracks = Vec::new();
-                let cache_key = Page::Playlist(id.clone());
                 if let Some(page) = self.playlist_pages.get_mut(&id) {
                     match result {
                         _ if page
@@ -5268,33 +5186,11 @@ impl App {
                                 && page.items.total == Some(items.total)
                                 && page.items.items.len() <= offset as usize
                                 && page.items_generation == generation;
-                            let extends_cached_rows = offset > 0
-                                && page.items.loaded_once
-                                && page.items.window_request.is_none()
-                                && page.items.windows.is_empty()
-                                && page.items.next_offset == Some(offset)
-                                && page.items.total == Some(items.total)
-                                && u32::try_from(page.items.items.len())
-                                    .ok()
-                                    .and_then(|len| page.items.base_offset.checked_add(len))
-                                    == Some(offset)
-                                && self.table_rows.get(&cache_key).is_some_and(|cache| {
-                                    cache.generation == generation
-                                        && cache.items_revision == page.items.revision
-                                        && cache.user_names_revision == self.user_names_revision
-                                        && cache.playlist_positions.is_some()
-                                        && cache.playlist_raw_count == page.items.items.len()
-                                });
                             if !extends_checkpoint {
                                 page.cache_append_valid = false;
                             }
                             page.items.absorb(offset, items);
                             page.items_generation = generation;
-                            if extends_cached_rows
-                                && let Some(cache) = self.table_rows.get_mut(&cache_key)
-                            {
-                                cache.playlist_append_revision = Some(page.items.revision);
-                            }
                         }
                         Err(error) => page.items.fail(friendly_page_error(self.locale, &error)),
                     }
@@ -5403,23 +5299,6 @@ impl App {
                     return;
                 }
                 self.cover_uploads.remove(&id);
-                if let Some(Dialog::EditPlaylist {
-                    id: current,
-                    cover: draft,
-                    ..
-                }) = &mut self.dialog
-                    && *current == id
-                    && draft.uploading == Some(request)
-                {
-                    draft.uploading = None;
-                    draft.error = result
-                        .as_ref()
-                        .err()
-                        .map(|error| cover_error(self.locale, error));
-                    if result.is_ok() {
-                        draft.selection = None;
-                    }
-                }
                 match result {
                     Ok(()) => {
                         self.set_playlist_cover(&id, &cover);
@@ -6283,7 +6162,6 @@ impl App {
         self.touch_page(&page);
         if *self.page() == page {
             self.ensure_loaded(page.clone());
-            self.retain_table_rows(&page);
             return;
         }
         self.history.truncate(self.history_index + 1);
@@ -6294,7 +6172,6 @@ impl App {
         self.history_index = self.history.len() - 1;
         self.show_devices = false;
         self.ensure_loaded(page.clone());
-        self.retain_table_rows(&page);
         self.evict_stale_pages();
     }
 
@@ -6511,8 +6388,6 @@ impl App {
                 self.track_used.remove(&id);
             }
         }
-        let current = self.page().clone();
-        self.retain_table_rows(&current);
     }
 
     // ---- playback --------------------------------------------------------------
@@ -8412,13 +8287,7 @@ impl App {
     pub(crate) fn apply_with(&mut self, action: Action, ctx: UiCtx<'_>) {
         if matches!(
             &action,
-            Action::Open(_)
-                | Action::OpenSongRadio { .. }
-                | Action::OpenUri(_)
-                | Action::OpenLink(_)
-                | Action::FocusSearch
-                | Action::SignOut
-                | Action::ToggleQueuePanel
+            Action::OpenLink(_) | Action::FocusSearch | Action::SignOut
         ) {
             self.leave_lyrics_fullscreen(ctx);
         }
@@ -8426,13 +8295,6 @@ impl App {
             self.leave_repeat_one();
         }
         match action {
-            Action::Open(page) => self.open(page),
-            Action::OpenSongRadio { uri, track } => self.open_song_radio(&uri, &track),
-            Action::OpenUri(uri) => {
-                if let Some(page) = Page::from_uri(&uri) {
-                    self.open(page);
-                }
-            }
             Action::OpenLink(uri) => {
                 // The window first: a link is the user asking for the
                 // app, signed in or not, and the page follows when it can.
@@ -8972,13 +8834,6 @@ impl App {
                 self.history = vec![Page::Home];
                 self.history_index = 0;
             }
-            Action::ToggleQueuePanel => {
-                self.show_queue_panel = !self.show_queue_panel;
-                if self.show_queue_panel {
-                    self.show_lyrics_panel = false;
-                    self.refresh_queue(true);
-                }
-            }
             Action::ReloadThemes => {}
             Action::SettingsChanged => {
                 self.settings_dirty = true;
@@ -9165,11 +9020,6 @@ impl App {
             kind: ToastKind::Error,
             created: Instant::now(),
         });
-    }
-
-    /// Clears the current row selection.
-    pub fn clear_picked_rows(&mut self) {
-        self.selection = None;
     }
 
     /// Whether songs may be added to `playlist` from here: the account
@@ -9528,14 +9378,6 @@ impl App {
                 self.now_playing_item().and_then(|item| match item {
                     PlayableItem::Track(track) if track.uri == uri => Some(track),
                     _ => None,
-                })
-            })
-            .or_else(|| {
-                self.table_rows.values().find_map(|table| {
-                    table.items.iter().find_map(|(item, _, _)| match item {
-                        PlayableItem::Track(track) if track.uri == uri => Some(track.clone()),
-                        _ => None,
-                    })
                 })
             })
             .or_else(|| {
@@ -12740,19 +12582,6 @@ mod tests {
         }
     }
 
-    fn cover_dialog(request: Option<u64>) -> Dialog {
-        Dialog::EditPlaylist {
-            id: "pl1".into(),
-            name: "Test".into(),
-            description: String::new(),
-            public: Some(false),
-            cover: crate::playlist_cover::Draft {
-                request,
-                ..Default::default()
-            },
-        }
-    }
-
     fn test_cover() -> crate::playlist_cover::Cover {
         test_cover_color([220, 20, 40])
     }
@@ -12767,36 +12596,9 @@ mod tests {
     }
 
     #[test]
-    fn cover_picker_cancellation_and_stale_completion_preserve_the_dialog() {
-        let mut app = test_app("cover-picker");
-        app.dialog = Some(cover_dialog(Some(2)));
-        app.cover_chosen("pl1", 1, Ok(Some(test_cover())));
-        let Some(Dialog::EditPlaylist { cover, .. }) = &app.dialog else {
-            panic!()
-        };
-        assert!(cover.selection.is_none());
-        assert_eq!(cover.request, Some(2));
-        app.cover_chosen("pl1", 2, Ok(None));
-        let Some(Dialog::EditPlaylist { cover, .. }) = &app.dialog else {
-            panic!()
-        };
-        assert!(cover.request.is_none());
-        assert!(cover.error.is_none());
-        app.dialog = None;
-        app.cover_chosen("pl1", 2, Ok(Some(test_cover())));
-        assert!(app.dialog.is_none());
-        app.backend.shutdown();
-    }
-
-    #[test]
-    fn failed_cover_upload_preserves_preview_and_success_refreshes_library_art() {
+    fn a_failed_cover_upload_says_why_and_a_success_refreshes_library_art() {
         let mut app = test_app("cover-upload");
-        app.dialog = Some(cover_dialog(None));
         let cover = test_cover();
-        if let Some(Dialog::EditPlaylist { cover: draft, .. }) = &mut app.dialog {
-            draft.selection = Some(cover.clone());
-            draft.uploading = Some(1);
-        }
         app.cover_uploads.insert("pl1".into(), 1);
         app.handle_api(ApiResponse::PlaylistCoverUploaded {
             id: "pl1".into(),
@@ -12808,19 +12610,16 @@ mod tests {
                 message: "Forbidden".into(),
             }),
         });
-        let Some(Dialog::EditPlaylist { cover: draft, .. }) = &app.dialog else {
-            panic!()
-        };
-        assert!(draft.uploading.is_none());
-        assert!(draft.selection.is_some());
-        assert!(draft.error.as_ref().unwrap().contains("sign in again"));
+        assert!(
+            app.toasts
+                .iter()
+                .any(|toast| toast.message.contains("sign in again"))
+        );
+        assert!(!app.uploaded_covers.contains_key("pl1"));
         app.library.playlists = Loadable::Loaded(vec![Playlist {
             id: "pl1".into(),
             ..Default::default()
         }]);
-        if let Some(Dialog::EditPlaylist { cover: draft, .. }) = &mut app.dialog {
-            draft.uploading = Some(2);
-        }
         app.cover_uploads.insert("pl1".into(), 2);
         app.handle_api(ApiResponse::PlaylistCoverUploaded {
             id: "pl1".into(),
@@ -12850,58 +12649,7 @@ mod tests {
             cover.uri,
             "lagging metadata must not undo the uploaded artwork"
         );
-        let Some(Dialog::EditPlaylist { cover: draft, .. }) = &app.dialog else {
-            panic!()
-        };
-        assert!(draft.selection.is_none());
-        assert!(draft.error.is_none());
         app.backend.shutdown();
-    }
-
-    #[test]
-    fn old_upload_completion_does_not_change_a_reopened_dialog() {
-        for succeeds in [false, true] {
-            for newer_upload in [None, Some(2)] {
-                let mut app = test_app("reopened-cover-upload");
-                app.dialog = Some(cover_dialog(None));
-                let selected = test_cover();
-                if let Some(Dialog::EditPlaylist { cover, .. }) = &mut app.dialog {
-                    cover.selection = Some(selected.clone());
-                    cover.uploading = Some(1);
-                }
-                app.dialog = None;
-                app.dialog = Some(cover_dialog(Some(3)));
-                if let Some(Dialog::EditPlaylist { cover, .. }) = &mut app.dialog {
-                    cover.selection = Some(selected.clone());
-                    cover.uploading = newer_upload;
-                    cover.error = Some("Newer selection error".into());
-                }
-                app.cover_uploads
-                    .insert("pl1".into(), newer_upload.unwrap_or(1));
-                app.handle_api(ApiResponse::PlaylistCoverUploaded {
-                    id: "pl1".into(),
-                    request: 1,
-                    previous_urls: vec![],
-                    cover: selected.clone(),
-                    result: if succeeds {
-                        Ok(())
-                    } else {
-                        Err(crate::api::ApiError::Status {
-                            status: 403,
-                            message: "Forbidden".into(),
-                        })
-                    },
-                });
-                let Some(Dialog::EditPlaylist { cover, .. }) = &app.dialog else {
-                    panic!()
-                };
-                assert_eq!(cover.selection.as_ref().unwrap().uri, selected.uri);
-                assert_eq!(cover.uploading, newer_upload);
-                assert_eq!(cover.request, Some(3));
-                assert_eq!(cover.error.as_deref(), Some("Newer selection error"));
-                app.backend.shutdown();
-            }
-        }
     }
 
     #[test]

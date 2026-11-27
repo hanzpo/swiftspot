@@ -1096,11 +1096,6 @@ pub enum Event {
         images: Vec<crate::api::models::Image>,
         result: Result<bool, String>,
     },
-    PlaylistCoverChosen {
-        id: String,
-        request: u64,
-        result: Result<Option<crate::playlist_cover::Cover>, String>,
-    },
     Auth(AuthStatus),
     Playback(LocalPlayback),
     /// Receivers seen on the local network that Spotify has not listed.

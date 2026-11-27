@@ -369,7 +369,7 @@ final class AppModel {
 
     // MARK: Requests
 
-    func call<T: Decodable>(_ method: String, _ params: [String: Any] = [:], as type: T.Type) async throws -> T {
+    func call<T: Decodable & Sendable>(_ method: String, _ params: [String: Any] = [:], as type: T.Type) async throws -> T {
         guard let client else { throw Client.Failure.closed }
         return try await client.call(method, params, as: type)
     }

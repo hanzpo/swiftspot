@@ -72,10 +72,16 @@ final class Client: @unchecked Sendable {
         }
     }
 
-    /// Calls `method` and decodes its result.
+    /// Calls `method` and decodes its result off the main actor, so a long
+    /// list never holds up the interface while it decodes.
     @MainActor
-    func call<T: Decodable>(_ method: String, _ params: [String: Any] = [:], as type: T.Type) async throws -> T {
-        try JSONDecoder.api.decode(T.self, from: try await call(method, params))
+    func call<T: Decodable & Sendable>(_ method: String, _ params: [String: Any] = [:], as type: T.Type) async throws -> T {
+        try await Self.decode(T.self, from: try await call(method, params))
+    }
+
+    @concurrent
+    private static func decode<T: Decodable & Sendable>(_ type: T.Type, from data: Data) async throws -> T {
+        try JSONDecoder.api.decode(T.self, from: data)
     }
 
     /// Fire and forget, for the player's buttons: the reply is dropped.

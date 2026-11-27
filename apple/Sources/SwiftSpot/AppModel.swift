@@ -583,7 +583,8 @@ final class AppModel {
     private var jamTask: Task<Void, Never>?
 
     /// Loads the queue again, dropping a load still running, so an older
-    /// answer never lands on top of a newer one.
+    /// answer never lands on top of a newer one. An edit drops it too: the
+    /// engine's `queue` event after the edit loads it again.
     func reloadQueue() {
         queueTask?.cancel()
         queueTask = Task { await loadQueue() }
@@ -624,6 +625,7 @@ final class AppModel {
 
     /// Moves a song queued by hand; `to` is the row it goes before.
     func moveQueued(from: Int, to: Int) {
+        queueTask?.cancel()
         if var queued = queue?.queued {
             queued.move(fromOffsets: IndexSet(integer: from), toOffset: to)
             queue?.queued = queued
@@ -633,6 +635,7 @@ final class AppModel {
 
     /// Takes one song queued by hand out of the queue.
     func removeQueued(at index: Int) {
+        queueTask?.cancel()
         if var queued = queue?.queued, queued.indices.contains(index) {
             queued.remove(at: index)
             queue?.queued = queued
@@ -641,6 +644,7 @@ final class AppModel {
     }
 
     func clearQueue() {
+        queueTask?.cancel()
         queue?.queued = []
         send("queue.clear")
     }

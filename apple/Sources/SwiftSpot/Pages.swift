@@ -215,13 +215,14 @@ struct SongsView: View {
     var method: String
     var params: [String: String]
 
+    @State private var rows = SongRows()
+
     private var filter: String { model.findText }
 
     var body: some View {
         Loader(method: method, params: params, loading: { $0.loading }) {
             (page: SongsPage, more: @escaping () -> Void) in
-            let tracks = numbered(page.tracks ?? [])
-            let shown = model.listSort.map { $0.apply(filtered(tracks)) } ?? filtered(tracks)
+            let (tracks, shown) = rows.resolve(page, filter: filter, sort: model.listSort)
             let playlistID = params["id"].flatMap { method == "playlist.get" ? $0 : nil }
             PageScroll {
                 PageHeader(
@@ -316,11 +317,36 @@ struct SongsView: View {
         return columns
     }
 
-    private func numbered(_ tracks: [Track]) -> [Track] {
-        tracks.enumerated().map { var track = $1; track.position = $0; return track }
+}
+
+/// A page's rows numbered, then filtered and sorted, worked out again only
+/// when the rows, the Find text or the sort change rather than on each
+/// redraw of the page.
+final class SongRows {
+    private struct Key: Equatable {
+        var tag: String
+        var count: Int
+        var filter: String
+        var sort: SongSort?
     }
 
-    private func filtered(_ tracks: [Track]) -> [Track] {
+    private var key: Key?
+    private var numbered: [Track] = []
+    private var shown: [Track] = []
+
+    func resolve(_ page: SongsPage, filter: String, sort: SongSort?) -> (all: [Track], shown: [Track]) {
+        let tracks = page.tracks ?? []
+        let next = page.rowsTag.map { Key(tag: $0, count: tracks.count, filter: filter, sort: sort) }
+        if let next, next == key { return (numbered, shown) }
+        if next?.tag != key?.tag || next?.count != key?.count || next == nil {
+            numbered = tracks.enumerated().map { var track = $1; track.position = $0; return track }
+        }
+        shown = sort.map { $0.apply(Self.filtered(numbered, by: filter)) } ?? Self.filtered(numbered, by: filter)
+        key = next
+        return (numbered, shown)
+    }
+
+    private static func filtered(_ tracks: [Track], by filter: String) -> [Track] {
         let needle = filter.trimmingCharacters(in: .whitespaces).lowercased()
         guard !needle.isEmpty else { return tracks }
         return tracks.filter {
